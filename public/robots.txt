@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /key
+Disallow: /keys
+Disallow: /decrypt
+
+Sitemap: https://decrypt.agent.coop/sitemap.xml
