@@ -1,0 +1,32 @@
+{
+  // decrypt.agent.coop — the decrypt Worker. Multi-tenant: keys in D1,
+  // wrapped with the KEK secret. Self-host: deploy the same Worker at your
+  // own origin with your own D1 and KEK (README).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "decrypt-agent-coop",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  "routes": [{ "pattern": "decrypt.agent.coop", "custom_domain": true }],
+  "assets": { "directory": "public", "binding": "ASSETS" },
+
+  "vars": {
+    "SERVICE": "decrypt",
+    "ORIGIN": "https://decrypt.agent.coop"
+  },
+
+  "d1_databases": [
+    { "binding": "DB", "database_name": "decrypt-agent-coop", "database_id": "5a941d73-3e83-4658-9ffd-4e9b40c7f768", "migrations_dir": "migrations" }
+  ],
+
+  // Daily: purge retired keys past purge_after.
+  "triggers": { "crons": ["23 3 * * *"] }
+
+  // Secrets (wrangler secret put):
+  //   KEK         — 32 random bytes, base64url (npm run generate-kek); wraps private keys
+  //   SIGNING_KEY — Ed25519 private JWK (npm run generate-key); signs resource tokens
+  //                 (unused until chaining, published in JWKS now)
+}

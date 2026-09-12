@@ -1,21 +1,59 @@
 # decrypt-agent-coop
 
-The decrypt service for [secret.agent.coop](https://secret.agent.coop): it holds the private key that decrypts your messages and decrypts them for your agent. This is the code that runs the hosted default at `decrypt.agent.coop`, and it is what you deploy to run your own.
+The decrypt service for [secret.agent.coop](https://secret.agent.coop): it holds the private key that
+decrypts your messages and decrypts them for your agent. This is the code that runs the hosted
+default at `decrypt.agent.coop`, and it is what you deploy to run your own.
 
-**Status: not yet built.** The design is settled; code lands with stage 1 of the service.
+**Status: stage 1 built (2026-09-12).** `getKey`, `rotateKey`, `getKeys`, `decryptEnvelope`;
+multi-tenant with keys in D1 wrapped under a KEK secret; interop vectors from `jose` and `jwcrypto`.
+Single-tenant mode (keys in secrets, no D1) and call chaining are later stages.
 
-## What it will be
+## What it is
 
-- A Cloudflare Worker, an [AAuth](https://aauth.dev) resource with `access_mode: person-token`. Identity is the `(iss, sub)` pair from the person token, directed to this service. It never sees an email address.
-- Operations: `GET /key` (current public key, created if none), `POST /key` (rotate), `POST /decrypt` (decrypt one message for the calling person), `GET /keys`, `DELETE /keys/{kid}` (per-call approval; destroys the private key).
-- Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, stored disassembled: protected header, IV, and tag travel as metadata; the ciphertext is raw bytes.
-- Storage: D1 for multi-tenant, with private keys wrapped by a key-encryption secret. Single-tenant mode keeps `(iss, sub)` and the private key in Worker secrets and needs no database.
-- Runs within the Workers Free plan CPU budget, so self-hosting costs nothing.
+- A Cloudflare Worker, an [AAuth](https://aauth.dev) resource with `access_mode: person-token`.
+  Identity is the `(iss, sub)` pair from the person token, directed to this service. It never sees an
+  email address; events carry a hash of the identity.
+- Operations (`/openapi.json`): `GET /key` current public key, created if none · `POST /key` mint a
+  new key, older keys stay decryptable · `GET /keys` all keys · `POST /decrypt` decrypt one message.
+- Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, stored disassembled:
+  [spec/container.md](spec/container.md). Decryption is Web Crypto directly (`src/jwe.ts`), no
+  library, checked against the vectors in `spec/vectors/`.
+- Private keys at rest are AES-256-GCM wrapped under the `KEK` secret with `(iss, sub, kid)` as AAD.
+- Ciphertext up to 1 MiB. In the Workers test runtime a 1 MiB decrypt round trip (signature
+  verification included) is about 60 ms wall; the Free-plan CPU figure on a real deployment is
+  still to be read from Workers Logs.
 
-## Interop
+## Use it from an agent
 
-The container format, its fields, and test vectors from `jose` (Node) and `jwcrypto` (Python) will live in `spec/` so any implementation can check itself against them.
+With the AAuth MCP: `connect_resource decrypt.agent.coop`, then `invoke getKey`; register the result
+at secret.agent.coop with `addKey {kid, alg, jwk}`. To read a message: `getMessage` at
+secret.agent.coop (JSON form), then `decryptEnvelope` here with `{protected, iv, tag, ciphertext}`
+where `ciphertext` is the `blob` field. The full flow is in the
+[secret-agent-coop skill](https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop).
 
-## Self-hosting
+## Run your own
 
-Coming with the code: `wrangler deploy` on a free Cloudflare account, two secrets for single-tenant mode, then register the public key with secret.agent.coop from your agent.
+```
+npm install
+npx wrangler d1 create decrypt-agent-coop        # put the id in wrangler.jsonc
+npx wrangler d1 migrations apply DB --remote
+npm run generate-kek | npx wrangler secret put KEK
+npm run generate-key | npx wrangler secret put SIGNING_KEY
+npx wrangler deploy                              # set your own route / custom domain in wrangler.jsonc
+```
+
+Then `connect_resource <your host>` from your agent, `getKey`, and register that key at
+secret.agent.coop. secret does not need to know where the private key lives (plan D16).
+
+## Develop
+
+```
+npm test          # vitest, Workers pool, D1 in Miniflare, fake Person Server in test/fake-ps
+npm run typecheck
+npm run vectors   # regenerate spec/vectors/jose.json
+python3 scripts/vectors_jwcrypto.py   # needs `pip install jwcrypto`
+```
+
+## License
+
+MIT
