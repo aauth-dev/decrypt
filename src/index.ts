@@ -155,6 +155,10 @@ app.post('/decrypt', requireIdentity, async (c) => {
   }
 })
 
+// The page paths listed in run_worker_first reach the Worker on every host;
+// on the live host they are served from the assets binding here.
+app.notFound((c) => (c.env.ASSETS ? c.env.ASSETS.fetch(c.req.raw) : c.text('not found', 404)))
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
