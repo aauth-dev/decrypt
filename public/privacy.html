@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Privacy · decrypt.aauth.dev</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="What decrypt.aauth.dev stores and sees.">
+<link rel="canonical" href="https://decrypt.aauth.dev/privacy">
+<style>
+:root{--ink:#15212b;--muted:#5b6770;--line:#d5dce3;--bg:#ffffff;--accent:#1d4ed8;--code:#f3f5f7}
+@media (prefers-color-scheme:dark){:root{--ink:#e6ebf0;--muted:#9aa6b2;--line:#2c3742;--bg:#0f151b;--accent:#8ab4ff;--code:#1a222b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;padding:32px 20px 64px}
+main{max-width:680px;margin:0 auto}h1{font-size:1.9rem;margin:0 0 .25rem}h2{font-size:1.25rem;margin:2.2rem 0 .6rem;padding-top:1rem;border-top:1px solid var(--line)}
+p{margin:.6rem 0}a{color:var(--accent)}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}
+code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:var(--code);padding:12px;border-radius:6px;overflow-x:auto}
+.lede{color:var(--muted);font-size:1.05rem}ul li{margin:.35rem 0}.small{color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy</h1>
+<p class="lede">What <a href="/">decrypt.aauth.dev</a> stores, what it sees, and for how long. Plain and short.</p>
+
+<h2>What it stores</h2>
+<ul>
+  <li><strong>An identity</strong>: the pairwise identifier your Person Server (Hellō) presents to this service. It is different from the one it presents to any other service, and it is not an email address. This service never learns your address or your name.</li>
+  <li><strong>Your keys</strong>: P-256 private keys, AES-256-GCM wrapped under a key only this service holds, plus their public halves and a key id. A rotated key is kept until nothing can still be encrypted to it, then purged.</li>
+  <li><strong>Events</strong>: for each call, the operation, the time, a hash of the identity, the key id, and the ciphertext size. Never the plaintext, never the ciphertext, never who sent a message or to whom.</li>
+</ul>
+
+<h2>What it sees</h2>
+<ul>
+  <li><strong>Plaintext, while decrypting</strong>. <code>decryptEnvelope</code> decrypts a message and returns it to your agent. The plaintext exists in memory for that call and is not kept. This is why the service asks for your consent by name and is not folded into the messaging service's consent: anything that sees plaintext should be one you approved.</li>
+  <li><strong>Nothing during setup</strong>. When secret.agent.coop calls <code>getKey</code> for you over a call chain, this service sees a token naming your identity here and that secret asked. It learns nothing else.</li>
+</ul>
+
+<h2>What it does not do</h2>
+<ul>
+  <li>It does not fetch ciphertext on its own; your agent brings it. (A chained download, where this service fetches from the messaging service for you, is planned and will be announced before it happens.)</li>
+  <li>It does not share keys or events with anyone. Events go to the operator's log pipeline for reliability and abuse handling only.</li>
+</ul>
+
+<h2>Run your own</h2>
+<p>None of this has to be trusted to us. The code is open and runs at any origin; the messaging service accepts any key you register. See <a href="/">the front page</a>.</p>
+
+<h2>Contact</h2>
+<p><a href="mailto:feedback@agent.coop">feedback@agent.coop</a> · <a href="mailto:abuse@agent.coop">abuse@agent.coop</a>. The operator is the same as secret.agent.coop's; its policy is at <a href="https://secret.agent.coop/privacy">secret.agent.coop/privacy</a>.</p>
+</main>
+</body>
+</html>

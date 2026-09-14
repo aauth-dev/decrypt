@@ -4,4 +4,4 @@ Disallow: /key
 Disallow: /keys
 Disallow: /decrypt
 
-Sitemap: https://decrypt.agent.coop/sitemap.xml
+Sitemap: https://decrypt.aauth.dev/sitemap.xml

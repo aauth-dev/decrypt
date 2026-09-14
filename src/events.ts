@@ -1,8 +1,7 @@
 // Structured events in the shape registry / aauth-mcp / aauth-proxy ship to
 // Freezer: snake_case service/event/timestamp/level/event_id, then request
-// context, then fields. Until Freezer accepts *.agent.coop streams (plan
-// item T) events go to console (Workers Logs); when EVENTS_QUEUE is bound
-// they also go to the queue. Identity on events is person_id, never an
+// context, then fields. Events go to console (Workers Logs); when
+// EVENTS_QUEUE is bound (plan item T) they also go to the queue. Identity on events is person_id, never an
 // address (A8).
 import type { Context } from 'hono'
 import type { Env, HonoEnv } from './types'

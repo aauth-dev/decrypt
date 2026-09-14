@@ -1,4 +1,4 @@
-// decrypt.agent.coop: keys per directed identity, decryptEnvelope in both
+// decrypt.aauth.dev: keys per directed identity, decryptEnvelope in both
 // body forms, refusals (tampered, wrong kid, other person), interop vectors
 // from jose and jwcrypto decrypted by the Web Crypto implementation, and
 // the 1 MiB timing check.
@@ -49,6 +49,28 @@ describe('public surface', () => {
     const res = await SELF.fetch(`${RESOURCE}/key`)
     expect(res.status).toBe(401)
     expect(res.headers.get('aauth-requirement')).toBe('requirement=person-token')
+  })
+  it('serves aauth-agent.json naming this origin and its JWKS (D24)', async () => {
+    const doc = (await (await SELF.fetch(`${RESOURCE}/.well-known/aauth-agent.json`)).json()) as Record<string, unknown>
+    expect(doc.issuer).toBe(RESOURCE)
+    expect(doc.name).toBe(new URL(RESOURCE).host)
+    expect(doc.jwks_uri).toBe(`${RESOURCE}/.well-known/jwks.json`)
+    const jwks = (await (await SELF.fetch(doc.jwks_uri as string)).json()) as { keys: Array<Record<string, unknown>> }
+    expect(jwks.keys[0].alg).toBe('Ed25519')
+    expect(jwks.keys[0].kid).toBeTypeOf('string')
+  })
+  it('the retired host redirects pages and answers 404 on the API and well-known', async () => {
+    const legacy = `https://${env.LEGACY_HOSTS!.split(/\s+/)[0]}`
+    const page = await SELF.fetch(`${legacy}/`, { redirect: 'manual' })
+    expect(page.status).toBe(301)
+    expect(page.headers.get('location')).toBe(`${RESOURCE}/`)
+    const llms = await SELF.fetch(`${legacy}/llms.txt`, { redirect: 'manual' })
+    expect(llms.headers.get('location')).toBe(`${RESOURCE}/llms.txt`)
+    for (const path of ['/key', '/.well-known/aauth-resource.json', '/openapi.json']) {
+      const res = await SELF.fetch(`${legacy}${path}`)
+      expect(res.status).toBe(404)
+      expect(((await res.json()) as { error: string }).error).toBe('moved')
+    }
   })
 })
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "decrypt.agent.coop: holds the private key that decrypts your secret.agent.coop messages and decrypts them for your agent (AAuth resource)",
+  "description": "decrypt.aauth.dev: holds the private key that decrypts your end-to-end encrypted messages and decrypts them for your agent (AAuth resource); the default decrypt service for secret.agent.coop",
   "license": "MIT",
   "scripts": {
     "dev": "wrangler dev",

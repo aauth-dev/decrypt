@@ -16,7 +16,7 @@ import { decodeJwt, decodeProtectedHeader, importJWK, jwtVerify, SignJWT } from 
 import { parseRequirementHeader } from '@aauth/protocol'
 
 export const PS = 'https://ps.fake.test'
-export const RESOURCE = 'https://decrypt.agent.coop'
+export const RESOURCE = 'https://decrypt.aauth.dev'
 
 export interface TestKey {
   privateKey: CryptoKey

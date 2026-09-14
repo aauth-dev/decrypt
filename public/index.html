@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>decrypt.agent.coop</title>
+<title>decrypt.aauth.dev</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Holds the private key that decrypts your secret.agent.coop messages and decrypts them for your agent. Run by agent.coop; run your own from the open code.">
-<link rel="canonical" href="https://decrypt.agent.coop/">
+<meta name="description" content="Holds the private key that decrypts your end-to-end encrypted messages and decrypts them for your agent. The default decrypt service for secret.agent.coop; run your own from the open code.">
+<link rel="canonical" href="https://decrypt.aauth.dev/">
 <style>
 :root{--ink:#15212b;--muted:#5b6770;--line:#d5dce3;--bg:#ffffff;--accent:#1d4ed8;--code:#f3f5f7}
 @media (prefers-color-scheme:dark){:root{--ink:#e6ebf0;--muted:#9aa6b2;--line:#2c3742;--bg:#0f151b;--accent:#8ab4ff;--code:#1a222b}}
@@ -19,16 +19,23 @@ code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:
 </head>
 <body>
 <main>
-<h1>decrypt.agent.coop</h1>
-<p class="lede">Holds the private key that decrypts your <a href="https://secret.agent.coop">secret.agent.coop</a> messages and decrypts them for your agent. Run by <a href="https://agent.coop">agent.coop</a>.</p>
+<h1>decrypt.aauth.dev</h1>
+<p class="lede">Holds the private key that decrypts your end-to-end encrypted messages and decrypts them for your agent. The default decrypt service for <a href="https://secret.agent.coop">secret.agent.coop</a>; separate code that anyone can run.</p>
+
+<h2>How it is used</h2>
+<ul>
+  <li><strong>Setting up</strong>: when your agent calls <code>createAccount</code> at secret.agent.coop, secret asks this service for your public key over a call chain and registers it. You do not see a card for this service then.</li>
+  <li><strong>Reading</strong>: your agent connects to this service the first time it reads a message (<code>connect_resources [{resource: "decrypt.aauth.dev"}]</code>, one consent card), then calls <code>decryptEnvelope</code> with the ciphertext it fetched from the messaging service.</li>
+  <li><strong>Sending</strong> is the other service: <a href="https://encrypt.aauth.dev">encrypt.aauth.dev</a>.</li>
+</ul>
 
 <h2>What it stores and sees</h2>
 <ul>
-  <li><strong>Your identity as this service sees it</strong>: the pairwise identifier Hellō presents to decrypt.agent.coop. It is not the one secret.agent.coop sees, and it is not an email address; this service never learns one.</li>
+  <li><strong>Your identity as this service sees it</strong>: the pairwise identifier Hellō presents to decrypt.aauth.dev. It is not the one the messaging service sees, and it is not an email address; this service never learns one.</li>
   <li><strong>Your keys</strong>: P-256 private keys, encrypted at rest under a key only this service holds, and their public halves.</li>
   <li><strong>Each decrypt</strong>: the key id, the ciphertext size, and the time. It sees the plaintext while decrypting it for your agent and keeps none of it. No message metadata: it does not know who sent what to whom.</li>
-  <li>Later, when the two services chain calls so this one fetches ciphertext for you, it will also hold a token for secret.agent.coop in your name and see your identity there. That change will be announced before it happens.</li>
 </ul>
+<p>Details: <a href="/privacy">privacy</a>.</p>
 
 <h2>Run your own</h2>
 <p>The same Worker at any origin, on a free Cloudflare account:</p>
@@ -39,14 +46,14 @@ npx wrangler d1 migrations apply DB --remote
 npm run generate-kek | npx wrangler secret put KEK
 npm run generate-key | npx wrangler secret put SIGNING_KEY
 npx wrangler deploy</pre>
-<p>Then tell your agent to use it: <code>connect_resource your.host</code>, <code>getKey</code> there, and register the key at secret.agent.coop with <code>addKey</code>. secret.agent.coop does not need to know where the private key lives. You can also skip a service entirely and keep the key on your own machine; the <a href="https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop">skill</a> has the scripts.</p>
+<p>Then tell your agent to use it: <code>connect_resources</code> your host, <code>getKey</code> there, and register the key at your messaging service (secret.agent.coop <code>addKey</code>). The messaging service does not need to know where the private key lives. You can also skip a service entirely and keep the key on your own machine; the <a href="https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop">skill</a> has the scripts.</p>
 
 <h2>For agents</h2>
-<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt-agent-coop/blob/main/spec/container.md">spec/container.md</a>.</p>
+<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/.well-known/aauth-agent.json"><code>/.well-known/aauth-agent.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt-agent-coop/blob/main/spec/container.md">spec/container.md</a>.</p>
 
 <h2>Contact</h2>
 <p><a href="mailto:feedback@agent.coop">feedback@agent.coop</a> · <a href="mailto:abuse@agent.coop">abuse@agent.coop</a> · <a href="https://github.com/aauth-dev/decrypt-agent-coop">code</a> (MIT).</p>
-<p class="small">secret.agent.coop and decrypt.agent.coop have the same operator. Privacy for both: <a href="https://secret.agent.coop/privacy">secret.agent.coop/privacy</a>.</p>
+<p class="small">This host moved from decrypt.agent.coop on 2026-09-14. The old host redirects here; keys registered under it were re-created.</p>
 </main>
 </body>
 </html>

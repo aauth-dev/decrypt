@@ -1,6 +1,8 @@
 export interface Env {
   SERVICE: string
   ORIGIN: string
+  /** hosts still routed here but retired: pages redirect, API 404 */
+  LEGACY_HOSTS?: string
   KEK: string // 32 bytes base64url, secret
   SIGNING_KEY: string // Ed25519 private JWK (JSON), secret
   DB: D1Database

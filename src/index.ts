@@ -1,6 +1,6 @@
-// decrypt.agent.coop — the decrypt Worker (plan A4, A5). Public: well-known,
-// JWKS, OpenAPI, pages. Protected (person token): getKey, rotateKey,
-// getKeys, decryptEnvelope.
+// decrypt.aauth.dev — the decrypt Worker (plan A4, A5, D26). Public:
+// well-known (resource and agent), JWKS, OpenAPI, pages. Protected (person
+// token): getKey, rotateKey, getKeys, decryptEnvelope.
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { requireIdentity, parseJsonBody } from './auth'
@@ -25,18 +25,38 @@ app.onError((err, c) => {
 
 app.use('*', cors({ origin: '*', exposeHeaders: ['AAuth-Requirement', 'Signature-Error', 'Accept-Signature', 'Accept-Signature-Scheme', 'Accept-Signature-Alg'] }))
 
+// A retired host (decrypt.agent.coop for one release after the move to
+// decrypt.aauth.dev): pages redirect to the new origin, the API and the
+// well-known documents answer 404 so no agent keeps a stale issuer.
+app.use('*', async (c, next) => {
+  const legacy = (c.env.LEGACY_HOSTS ?? '').split(/\s+/).filter(Boolean)
+  const url = new URL(c.req.url)
+  if (!legacy.includes(url.host)) return next()
+  const isPage = c.req.method === 'GET' && (url.pathname === '/' || /^\/(privacy|llms\.txt|robots\.txt|sitemap\.xml)$/.test(url.pathname))
+  if (isPage) return c.redirect(`${c.env.ORIGIN}${url.pathname}`, 301)
+  emit(c, { event: 'legacy_host_refused', level: 40, host: url.host })
+  return c.json({ error: 'moved', detail: `this service is now ${c.env.ORIGIN}; connect to it there` }, 404)
+})
+
 app.get('/.well-known/aauth-resource.json', (c) => {
   const origin = c.env.ORIGIN
   return c.json({
     issuer: origin,
     jwks_uri: `${origin}/.well-known/jwks.json`,
-    name: 'decrypt.agent.coop',
-    description: 'Holds the private key that decrypts your secret.agent.coop messages and decrypts them for your agent. Run by agent.coop; the code is open and you can run your own.',
+    name: 'decrypt.aauth.dev',
+    description: 'Holds the private key that decrypts your end-to-end encrypted messages and decrypts them for your agent. The default decrypt service for secret.agent.coop; the code is open and you can run your own.',
     access_mode: 'person-token',
     r3_vocabularies: { 'urn:aauth:vocabulary:openapi': `${origin}/openapi.json` },
     contact: { feedback: 'feedback@agent.coop', abuse: 'abuse@agent.coop' },
     llms_txt: `${origin}/llms.txt`,
   })
+})
+// D24: decrypt will act as an intermediary toward the messaging service for
+// the chained download. The agent document names it and points at the JWKS
+// the agent token is signed under.
+app.get('/.well-known/aauth-agent.json', (c) => {
+  const origin = c.env.ORIGIN
+  return c.json({ issuer: origin, name: new URL(origin).host, jwks_uri: `${origin}/.well-known/jwks.json` })
 })
 app.get('/.well-known/jwks.json', async (c) => c.json({ keys: [await getPublicJWK(c.env.SIGNING_KEY)] }))
 app.get('/openapi.json', (c) => c.json(openapi(c.env.ORIGIN)))

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Live smoke for decrypt.agent.coop: unauthenticated surface and the 401 shape.
+# Live smoke for decrypt.aauth.dev: unauthenticated surface, the agent document, and the 401 shape.
 #   bash scripts/smoke.sh [base_url]
 set -uo pipefail
-BASE="${1:-https://decrypt.agent.coop}"
+BASE="${1:-https://decrypt.aauth.dev}"
 PASS=0; FAIL=0
 check() { if [ "$2" = "true" ]; then echo "  PASS  $1"; PASS=$((PASS+1)); else echo "  FAIL  $1"; FAIL=$((FAIL+1)); fi; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
@@ -10,11 +10,19 @@ echo "Testing $BASE"
 META=$(curl -sf "$BASE/.well-known/aauth-resource.json")
 check "well-known issuer matches origin" "$(echo "$META" | jq -r .issuer | grep -qx "$BASE" && echo true || echo false)"
 check "access_mode is person-token" "$(echo "$META" | jq -e '.access_mode == "person-token"' >/dev/null 2>&1 && echo true || echo false)"
+AGENT=$(curl -sf "$BASE/.well-known/aauth-agent.json")
+check "aauth-agent.json issuer matches origin and names the jwks" "$(echo "$AGENT" | jq -e --arg b "$BASE" '.issuer == $b and .jwks_uri == ($b + "/.well-known/jwks.json") and (.name | length > 0)' >/dev/null 2>&1 && echo true || echo false)"
 JWKS=$(curl -sf "$BASE/.well-known/jwks.json")
 check "jwks key is Ed25519, no private material" "$(echo "$JWKS" | jq -e '.keys[0].crv == "Ed25519" and .keys[0].alg == "Ed25519" and .keys[0].d == null' >/dev/null 2>&1 && echo true || echo false)"
 SPEC=$(curl -sf "$BASE/openapi.json")
 check "openapi lists getKey and decryptEnvelope" "$(echo "$SPEC" | jq -e '.paths["/key"].get.operationId == "getKey" and .paths["/decrypt"].post.operationId == "decryptEnvelope"' >/dev/null 2>&1 && echo true || echo false)"
-for p in / /robots.txt /llms.txt /sitemap.xml /health; do check "GET $p is 200" "$([ "$(code "$BASE$p")" = "200" ] && echo true || echo false)"; done
+for p in / /privacy /robots.txt /llms.txt /sitemap.xml /health; do check "GET $p is 200" "$([ "$(code "$BASE$p")" = "200" ] && echo true || echo false)"; done
 H=$(curl -s -D - -o /dev/null "$BASE/key")
 check "unsigned GET /key is 401 requirement=person-token" "$(echo "$H" | grep -q '^HTTP/[0-9.]* 401' && echo "$H" | grep -qi 'aauth-requirement: requirement=person-token' && echo true || echo false)"
+LEGACY="${LEGACY:-https://decrypt.agent.coop}"
+if [ -n "$LEGACY" ] && [ "$LEGACY" != "$BASE" ] && curl -s -o /dev/null --max-time 10 "$LEGACY/health"; then
+  check "legacy host redirects / to $BASE" "$([ "$(curl -s -o /dev/null -w '%{redirect_url}' "$LEGACY/")" = "$BASE/" ] && echo true || echo false)"
+  check "legacy host answers 404 on the API" "$([ "$(code "$LEGACY/key")" = "404" ] && echo true || echo false)"
+  check "legacy host answers 404 on the well-known" "$([ "$(code "$LEGACY/.well-known/aauth-resource.json")" = "404" ] && echo true || echo false)"
+fi
 echo; echo "$PASS passed, $FAIL failed"; [ "$FAIL" = 0 ]

@@ -1,15 +1,15 @@
-# decrypt.agent.coop
+# decrypt.aauth.dev
 
-> Holds the private key that decrypts a person's secret.agent.coop messages and decrypts them for their agent. An AAuth resource (access_mode: person-token) run by agent.coop; open code, self-hostable.
+> Holds the private key that decrypts a person's end-to-end encrypted messages and decrypts them for their agent. An AAuth resource (access_mode: person-token). Open code, self-hostable; this host is the default decrypt service for secret.agent.coop.
 
-Reach it with the AAuth MCP: `connect_resource decrypt.agent.coop`, then `invoke` by operationId from /openapi.json.
+Reach it with the AAuth MCP: `connect_resources [{resource: "decrypt.aauth.dev"}]`, then `invoke` by operationId from /openapi.json.
 
 ## Operations
 
-- `getKey`: the person's current public key `{kid, alg: "ECDH-ES", jwk}`, created on first call. Register it at secret.agent.coop with `addKey` using exactly these values.
-- `rotateKey`: mint a new key; older keys keep decrypting.
+- `getKey`: the person's current public key `{kid, alg: "ECDH-ES", jwk}`, created on first call. secret.agent.coop `createAccount` fetches and registers it for you over a call chain; the manual path is `addKey` there with exactly these values.
+- `rotateKey`: mint a new key; older keys keep decrypting. Register the new one at your messaging service.
 - `getKeys`: all keys with state.
-- `decryptEnvelope`: body `{protected, iv, tag, ciphertext}` where `ciphertext` is the base64url `blob` from secret.agent.coop `getMessage`. Returns `{kid, size, plaintext: {text, attachments}, warnings}`. Also accepts raw octet-stream with `?protected=&iv=&tag=`.
+- `decryptEnvelope`: body `{protected, iv, tag, ciphertext}` where `ciphertext` is the base64url `blob` from your messaging service (secret.agent.coop `getMessage`). Returns `{kid, size, plaintext: {text}, warnings}`. Also accepts raw octet-stream with `?protected=&iv=&tag=`.
 
 ## Format
 
@@ -17,8 +17,11 @@ JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-de
 
 ## Links
 
-- Metadata: https://decrypt.agent.coop/.well-known/aauth-resource.json
-- OpenAPI: https://decrypt.agent.coop/openapi.json
+- Metadata: https://decrypt.aauth.dev/.well-known/aauth-resource.json
+- Agent document (call chaining): https://decrypt.aauth.dev/.well-known/aauth-agent.json
+- OpenAPI: https://decrypt.aauth.dev/openapi.json
+- Privacy: https://decrypt.aauth.dev/privacy
 - Code and self-hosting: https://github.com/aauth-dev/decrypt-agent-coop
-- The messaging service: https://secret.agent.coop/llms.txt
+- The default messaging service: https://secret.agent.coop/llms.txt
+- The matching send service: https://encrypt.aauth.dev/llms.txt
 - Contact: feedback@agent.coop · abuse@agent.coop
