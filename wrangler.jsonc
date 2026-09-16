@@ -10,23 +10,12 @@
   "workers_dev": false,
   "observability": { "enabled": true },
 
-  // decrypt.aauth.dev is the host (D26). decrypt.agent.coop stays attached
-  // for one release: pages redirect, the API answers 404 (see LEGACY_HOSTS).
-  "routes": [
-    { "pattern": "decrypt.aauth.dev", "custom_domain": true },
-    { "pattern": "decrypt.agent.coop", "custom_domain": true }
-  ],
-  // Pages are assets, and assets are served before the Worker runs; the
-  // page paths go through the Worker first so a retired host can redirect
-  // them (index.ts serves them from ASSETS on the live host).
-  "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": ["/", "/privacy", "/llms.txt", "/robots.txt", "/sitemap.xml"] },
+  "routes": [{ "pattern": "decrypt.aauth.dev", "custom_domain": true }],
+  "assets": { "directory": "public", "binding": "ASSETS" },
 
   "vars": {
     "SERVICE": "decrypt",
-    "ORIGIN": "https://decrypt.aauth.dev",
-    // Hosts this Worker still answers on but no longer serves: GET pages
-    // redirect to ORIGIN, everything else is 404 moved. Space-separated.
-    "LEGACY_HOSTS": "decrypt.agent.coop"
+    "ORIGIN": "https://decrypt.aauth.dev"
   },
 
   "d1_databases": [

@@ -11,7 +11,7 @@ A recipient publishes one or more public keys, each `{kid, alg, jwk}`:
 
 - `alg` is `ECDH-ES`.
 - `jwk` is an EC P-256 public key: `{"kty":"EC","crv":"P-256","x":…,"y":…}`. No `d`, no `use`, no `key_ops`.
-- `kid` is any printable ASCII string up to 128 characters the recipient chose. decrypt.agent.coop uses
+- `kid` is any printable ASCII string up to 128 characters the recipient chose. decrypt.aauth.dev uses
   the RFC 7638 thumbprint of the public JWK (`BASE64URL(SHA-256('{"crv":"P-256","kty":"EC","x":"…","y":"…"}'))`),
   and senders MUST copy the `kid` exactly as published.
 
@@ -66,7 +66,7 @@ secret.agent.coop:
 - `getMessage`: `GET /messages/{id}` returns the raw bytes as `application/octet-stream`; with
   `Accept: application/json` it returns `{"id", "protected", "iv", "tag", "blob": "<base64url>"}`.
 
-decrypt.agent.coop (`decryptEnvelope`, `POST /decrypt`):
+decrypt.aauth.dev (`decryptEnvelope`, `POST /decrypt`):
 
 - JSON: `{"protected", "iv", "tag", "ciphertext": "<base64url>"}`.
 - Or raw bytes as `application/octet-stream` with `?protected=&iv=&tag=` query parameters.

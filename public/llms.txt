@@ -13,7 +13,7 @@ Reach it with the AAuth MCP: `connect_resources [{resource: "decrypt.aauth.dev"}
 
 ## Format
 
-JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-dev/decrypt-agent-coop/blob/main/spec/container.md (with jose and jwcrypto vectors). Ciphertext up to 1 MiB.
+JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-dev/decrypt/blob/main/spec/container.md (with jose and jwcrypto vectors). Ciphertext up to 1 MiB.
 
 ## Links
 
@@ -21,7 +21,7 @@ JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-de
 - Agent document (call chaining): https://decrypt.aauth.dev/.well-known/aauth-agent.json
 - OpenAPI: https://decrypt.aauth.dev/openapi.json
 - Privacy: https://decrypt.aauth.dev/privacy
-- Code and self-hosting: https://github.com/aauth-dev/decrypt-agent-coop
+- Code and self-hosting: https://github.com/aauth-dev/decrypt
 - The default messaging service: https://secret.agent.coop/llms.txt
 - The matching send service: https://encrypt.aauth.dev/llms.txt
 - Contact: feedback@agent.coop · abuse@agent.coop

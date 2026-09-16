@@ -1,4 +1,4 @@
--- decrypt.agent.coop schema (plan A6). One row per private key, keyed by
+-- decrypt schema (plan A6). One row per private key, keyed by
 -- the person's directed identity at this service and the key id.
 CREATE TABLE private_keys (
   ps_iss       TEXT NOT NULL,

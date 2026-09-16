@@ -25,19 +25,6 @@ app.onError((err, c) => {
 
 app.use('*', cors({ origin: '*', exposeHeaders: ['AAuth-Requirement', 'Signature-Error', 'Accept-Signature', 'Accept-Signature-Scheme', 'Accept-Signature-Alg'] }))
 
-// A retired host (decrypt.agent.coop for one release after the move to
-// decrypt.aauth.dev): pages redirect to the new origin, the API and the
-// well-known documents answer 404 so no agent keeps a stale issuer.
-app.use('*', async (c, next) => {
-  const legacy = (c.env.LEGACY_HOSTS ?? '').split(/\s+/).filter(Boolean)
-  const url = new URL(c.req.url)
-  if (!legacy.includes(url.host)) return next()
-  const isPage = c.req.method === 'GET' && (url.pathname === '/' || /^\/(privacy|llms\.txt|robots\.txt|sitemap\.xml)$/.test(url.pathname))
-  if (isPage) return c.redirect(`${c.env.ORIGIN}${url.pathname}`, 301)
-  emit(c, { event: 'legacy_host_refused', level: 40, host: url.host })
-  return c.json({ error: 'moved', detail: `this service is now ${c.env.ORIGIN}; connect to it there` }, 404)
-})
-
 app.get('/.well-known/aauth-resource.json', (c) => {
   const origin = c.env.ORIGIN
   return c.json({

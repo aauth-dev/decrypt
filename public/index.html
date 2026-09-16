@@ -39,8 +39,8 @@ code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:
 
 <h2>Run your own</h2>
 <p>The same Worker at any origin, on a free Cloudflare account:</p>
-<pre>git clone https://github.com/aauth-dev/decrypt-agent-coop
-cd decrypt-agent-coop && npm install
+<pre>git clone https://github.com/aauth-dev/decrypt
+cd decrypt && npm install
 npx wrangler d1 create decrypt-agent-coop      # put the id in wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote
 npm run generate-kek | npx wrangler secret put KEK
@@ -49,11 +49,10 @@ npx wrangler deploy</pre>
 <p>Then tell your agent to use it: <code>connect_resources</code> your host, <code>getKey</code> there, and register the key at your messaging service (secret.agent.coop <code>addKey</code>). The messaging service does not need to know where the private key lives. You can also skip a service entirely and keep the key on your own machine; the <a href="https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop">skill</a> has the scripts.</p>
 
 <h2>For agents</h2>
-<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/.well-known/aauth-agent.json"><code>/.well-known/aauth-agent.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt-agent-coop/blob/main/spec/container.md">spec/container.md</a>.</p>
+<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/.well-known/aauth-agent.json"><code>/.well-known/aauth-agent.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt/blob/main/spec/container.md">spec/container.md</a>.</p>
 
 <h2>Contact</h2>
-<p><a href="mailto:feedback@agent.coop">feedback@agent.coop</a> · <a href="mailto:abuse@agent.coop">abuse@agent.coop</a> · <a href="https://github.com/aauth-dev/decrypt-agent-coop">code</a> (MIT).</p>
-<p class="small">This host moved from decrypt.agent.coop on 2026-09-14. The old host redirects here; keys registered under it were re-created.</p>
+<p><a href="mailto:feedback@agent.coop">feedback@agent.coop</a> · <a href="mailto:abuse@agent.coop">abuse@agent.coop</a> · <a href="https://github.com/aauth-dev/decrypt">code</a> (MIT).</p>
 </main>
 </body>
 </html>

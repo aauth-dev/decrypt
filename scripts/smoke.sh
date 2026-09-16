@@ -19,10 +19,4 @@ check "openapi lists getKey and decryptEnvelope" "$(echo "$SPEC" | jq -e '.paths
 for p in / /privacy /robots.txt /llms.txt /sitemap.xml /health; do check "GET $p is 200" "$([ "$(code "$BASE$p")" = "200" ] && echo true || echo false)"; done
 H=$(curl -s -D - -o /dev/null "$BASE/key")
 check "unsigned GET /key is 401 requirement=person-token" "$(echo "$H" | grep -q '^HTTP/[0-9.]* 401' && echo "$H" | grep -qi 'aauth-requirement: requirement=person-token' && echo true || echo false)"
-LEGACY="${LEGACY:-https://decrypt.agent.coop}"
-if [ -n "$LEGACY" ] && [ "$LEGACY" != "$BASE" ] && curl -s -o /dev/null --max-time 10 "$LEGACY/health"; then
-  check "legacy host redirects / to $BASE" "$([ "$(curl -s -o /dev/null -w '%{redirect_url}' "$LEGACY/")" = "$BASE/" ] && echo true || echo false)"
-  check "legacy host answers 404 on the API" "$([ "$(code "$LEGACY/key")" = "404" ] && echo true || echo false)"
-  check "legacy host answers 404 on the well-known" "$([ "$(code "$LEGACY/.well-known/aauth-resource.json")" = "404" ] && echo true || echo false)"
-fi
 echo; echo "$PASS passed, $FAIL failed"; [ "$FAIL" = 0 ]

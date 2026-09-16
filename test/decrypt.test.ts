@@ -59,19 +59,6 @@ describe('public surface', () => {
     expect(jwks.keys[0].alg).toBe('Ed25519')
     expect(jwks.keys[0].kid).toBeTypeOf('string')
   })
-  it('the retired host redirects pages and answers 404 on the API and well-known', async () => {
-    const legacy = `https://${env.LEGACY_HOSTS!.split(/\s+/)[0]}`
-    const page = await SELF.fetch(`${legacy}/`, { redirect: 'manual' })
-    expect(page.status).toBe(301)
-    expect(page.headers.get('location')).toBe(`${RESOURCE}/`)
-    const llms = await SELF.fetch(`${legacy}/llms.txt`, { redirect: 'manual' })
-    expect(llms.headers.get('location')).toBe(`${RESOURCE}/llms.txt`)
-    for (const path of ['/key', '/.well-known/aauth-resource.json', '/openapi.json']) {
-      const res = await SELF.fetch(`${legacy}${path}`)
-      expect(res.status).toBe(404)
-      expect(((await res.json()) as { error: string }).error).toBe('moved')
-    }
-  })
 })
 
 describe('keys', () => {

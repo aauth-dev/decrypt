@@ -1,4 +1,4 @@
-# decrypt-agent-coop
+# decrypt
 
 A decrypt service for end-to-end encrypted agent messaging: it holds the private key that decrypts
 your messages and decrypts them for your agent. This is the code that runs the hosted default at
@@ -10,7 +10,6 @@ brings the ciphertext, and secret registers whatever key you give it.
 `rotateKey`, `getKeys`, `decryptEnvelope`; multi-tenant with keys in D1 wrapped under a KEK secret;
 interop vectors from `jose` and `jwcrypto`; `/.well-known/aauth-agent.json` for the coming chained
 download. Single-tenant mode (keys in secrets, no D1) and the chained download are later stages.
-`decrypt.agent.coop` redirects its pages here and answers 404 on the API for one release.
 
 ## What it is
 
