@@ -45,7 +45,7 @@ shows this service's consent card, since it sees the plaintext. The full flow is
 
 ```
 npm install
-npx wrangler d1 create decrypt-agent-coop        # put the id in wrangler.jsonc
+npx wrangler d1 create decrypt-aauth-dev         # put the id in wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote
 npm run generate-kek | npx wrangler secret put KEK
 npm run generate-key | npx wrangler secret put SIGNING_KEY

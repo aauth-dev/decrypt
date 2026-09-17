@@ -3,7 +3,7 @@
   // wrapped with the KEK secret. Self-host: deploy the same Worker at your
   // own origin with your own D1 and KEK (README).
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "decrypt-agent-coop",
+  "name": "decrypt-aauth-dev",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -19,7 +19,7 @@
   },
 
   "d1_databases": [
-    { "binding": "DB", "database_name": "decrypt-agent-coop", "database_id": "5a941d73-3e83-4658-9ffd-4e9b40c7f768", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "decrypt-aauth-dev", "database_id": "b22d7df8-13be-4d3b-9940-b37074123fdd", "migrations_dir": "migrations" }
   ],
 
   // Daily: purge retired keys past purge_after.

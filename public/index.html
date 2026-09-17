@@ -41,7 +41,7 @@ code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:
 <p>The same Worker at any origin, on a free Cloudflare account:</p>
 <pre>git clone https://github.com/aauth-dev/decrypt
 cd decrypt && npm install
-npx wrangler d1 create decrypt-agent-coop      # put the id in wrangler.jsonc
+npx wrangler d1 create decrypt-aauth-dev       # put the id in wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote
 npm run generate-kek | npx wrangler secret put KEK
 npm run generate-key | npx wrangler secret put SIGNING_KEY
