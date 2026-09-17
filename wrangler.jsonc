@@ -26,7 +26,30 @@
   ],
 
   // Daily: purge retired keys past purge_after.
-  "triggers": { "crons": ["23 3 * * *"] }
+  "triggers": { "crons": ["23 3 * * *"] },
+
+  // A second read service, to test secret's setServices live (plan
+  // read-send-services Q13, 13c step 5): the same code at
+  // decrypt-test.aauth.dev with its own D1, KEK, SIGNING_KEY and AGENT_KEY.
+  // `wrangler deploy --env test`. vars, routes and d1_databases are not
+  // inherited by an environment, so they are all here. Create the database
+  // with `wrangler d1 create decrypt-test-aauth-dev` and put its id below;
+  // the placeholder makes a deploy fail rather than use the wrong database.
+  "env": {
+    "test": {
+      "name": "decrypt-test-aauth-dev",
+      "routes": [{ "pattern": "decrypt-test.aauth.dev", "custom_domain": true }],
+      "vars": {
+        "SERVICE": "decrypt-test",
+        "ORIGIN": "https://decrypt-test.aauth.dev",
+        "DEFAULT_RESOURCE": "https://secret.agent.coop"
+      },
+      "d1_databases": [
+        { "binding": "DB", "database_name": "decrypt-test-aauth-dev", "database_id": "REPLACE_WITH_DECRYPT_TEST_D1_ID", "migrations_dir": "migrations" }
+      ],
+      "triggers": { "crons": ["23 3 * * *"] }
+    }
+  }
 
   // Secrets (wrangler secret put):
   //   KEK         — 32 random bytes, base64url (npm run generate-kek); wraps private keys
