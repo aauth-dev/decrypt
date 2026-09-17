@@ -1,20 +1,24 @@
 # decrypt.aauth.dev
 
-> Holds the private key that decrypts a person's end-to-end encrypted messages and decrypts them for their agent. An AAuth resource (access_mode: person-token). Open code, self-hostable; this host is the default decrypt service for secret.agent.coop.
+> A read service. Holds the private keys that decrypt a person's end-to-end encrypted messages, and reads a message for their agent: it downloads the message from the messaging service over an AAuth call chain and decrypts it. An AAuth resource (access_mode: person-token). Open code, self-hostable; this host is the default read service for secret.agent.coop.
 
-Reach it with the AAuth MCP: `connect_resources [{resource: "decrypt.aauth.dev"}]`, then `invoke` by operationId from /openapi.json.
+Reach it with the AAuth MCP: `connect_resources {items: [{resource: "decrypt.aauth.dev"}]}` (the person approves one card; this service sees plaintext), then `invoke {resource: "decrypt.aauth.dev", op_id: "readMessage", body: {id}}`. Put the fields directly in `body`.
+
+`listMessages` at the messaging service names the person's read service as `read_message_with {resource, op_id}`. A message sent before the person changed read service carries its own.
 
 ## Operations
 
-- `getKey`: the person's current public key `{kid, alg: "ECDH-ES", jwk}`, created on first call. secret.agent.coop `createAccount` fetches and registers it for you over a call chain; the manual path is `addKey` there with exactly these values.
-- `rotateKey`: mint a new key; older keys keep decrypting. Register the new one at your messaging service.
-- `getKeys`: all keys with state.
-- `getMessage`: `GET /messages/{id}?resource=https://secret.agent.coop`. Fetches the message from that messaging service over a call chain (a person token from your Person Server, no card) and decrypts it. Returns `{id, from, to, resource, kid, size, plaintext: {text}, warnings}`. This is the one call to read; the ciphertext never passes through your agent. The download marks the message downloaded there.
-- `decryptEnvelope`: body `{protected, iv, tag, ciphertext}` where `ciphertext` is the base64url `blob` from your messaging service (secret.agent.coop `getMessage`). Returns `{kid, size, plaintext: {text}, warnings}`. Also accepts raw octet-stream with `?protected=&iv=&tag=`.
+- `readMessage {id, resource?}`: the one call to read. `id` is from `listMessages`. `resource` is the messaging service, as an https origin; optional, default `https://secret.agent.coop`. It gets a person token for `resource` from the Person Server over a call chain (no card), calls `downloadMessage {id}` there (which marks the message downloaded), and decrypts the JWE with the private key for its `kid`. Returns `{id, from, from_name, to, created_at, resource, kid, text, warnings}`. The JWE never passes through the agent. A system message comes back as the messaging service sent it, with `system` and no `text`.
+  - `404 unknown_kid`: no private key of the person here matches the JWE. If they changed read service, read that message at the one in its `read_message_with`.
+  - Refusals from the messaging service pass through with `step: download_message` (`404 not_found`: not theirs, purged, or expired).
+  - `422 decrypt_failed`: the JWE did not authenticate. `502` with `step: person_token`: the Person Server refused a token for `resource`.
+- `rotateKey {resource?}`: mint a new key and give it to the messaging service (`setPublicKey` there, over a call chain) so senders use it from now on. Older keys stay: messages already sent still read. Returns the new key and the messaging service's answer. If the messaging service refuses (`403 not_read_service`: this is not the person's read service there), the key is unchanged. The messaging service's own `rotatePublicKey` calls this operation; then there is no call back.
+- `getKey`: the person's current public key `{kid, alg: "ECDH-ES", jwk}`, created on first call. The messaging service calls it for the person at `createAccount` and `setServices`; an agent does not need to.
+- `getKeys`: all the person's keys, newest first.
 
 ## Format
 
-JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-dev/decrypt/blob/main/spec/container.md (with jose and jwcrypto vectors). Ciphertext up to 1 MiB.
+One compact JWE, ECDH-ES + A256GCM on P-256, plaintext `{"text": "…"}`: https://github.com/aauth-dev/decrypt/blob/main/spec/container.md (with jose and jwcrypto vectors). Text up to 64 KB; the JWE up to 96 KB at the messaging service.
 
 ## Links
 

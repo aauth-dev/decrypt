@@ -2,43 +2,50 @@
 
 A decrypt service for end-to-end encrypted agent messaging: it holds the private key that decrypts
 your messages and decrypts them for your agent. This is the code that runs the hosted default at
-`decrypt.aauth.dev` (the default decrypt service for [secret.agent.coop](https://secret.agent.coop)),
-and it is what you deploy to run your own. Nothing in the code names a messaging service: the agent
-brings the ciphertext, and secret registers whatever key you give it.
+`decrypt.aauth.dev` (the default read service for [secret.agent.coop](https://secret.agent.coop)),
+and it is what you deploy to run your own. Nothing in the code names a messaging service: `resource`
+is a parameter whose default is the `DEFAULT_RESOURCE` var in `wrangler.jsonc`.
 
-**Status: stage 1 built (2026-09-12), moved to decrypt.aauth.dev (2026-09-14).** `getKey`,
-`rotateKey`, `getKeys`, `decryptEnvelope`; multi-tenant with keys in D1 wrapped under a KEK secret;
-interop vectors from `jose` and `jwcrypto`. **Chained download (D1) built 2026-09-16**: `getMessage`
-fetches the envelope from the messaging service as an AAuth intermediary and decrypts it.
-Single-tenant mode (keys in secrets, no D1) is a later stage.
+**Status: rewritten for plan D27 (2026-09-17).** `readMessage`, `getKey`, `rotateKey`, `getKeys`;
+multi-tenant with keys in D1 wrapped under a KEK secret; a message is one compact JWE; interop
+vectors from `jose` and `jwcrypto`. `getMessage` and `decryptEnvelope` are gone. Single-tenant mode
+(keys in secrets, no D1) is a later stage.
 
 ## What it is
 
-- A Cloudflare Worker, an [AAuth](https://aauth.dev) resource with `access_mode: person-token`,
-  hosted beside the other aauth.dev services.
-  Identity is the `(iss, sub)` pair from the person token, directed to this service. It never sees an
-  email address; events carry a hash of the identity.
-- Operations (`/openapi.json`): `GET /key` current public key, created if none · `POST /key` mint a
-  new key, older keys stay decryptable · `GET /keys` all keys · `POST /decrypt` decrypt one message the agent brings · `GET /messages/{id}?resource=`
-  fetch one message from the messaging service over a call chain and decrypt it.
-- Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, stored disassembled:
+- A Cloudflare Worker, an [AAuth](https://aauth.dev) resource with `access_mode: person-token`, and
+  an AAuth agent toward the messaging service (`/.well-known/aauth-agent.json`, `aauth:read@<host>`).
+  In secret.agent.coop's terms it is a **read service**: `listMessages` there names a person's as
+  `read_message_with`. Identity is the `(iss, sub)` pair from the person token, directed to this
+  service. It never sees an email address; events carry a hash of the identity.
+- Operations (`/openapi.json`):
+  - `POST /read` (`readMessage`) `{id, resource?}`: person token for `resource` over a call chain,
+    `downloadMessage {id}` there with `Accept: application/json`, decrypt the JWE with the private key
+    for its `kid`, return `{id, from, from_name, to, created_at, resource, kid, text, warnings}`.
+  - `GET /key` (`getKey`): current public key, created if none. The messaging service calls it for
+    the person at `createAccount` and `setServices`, finding it by operationId in `openapi.json`.
+  - `POST /key` (`rotateKey`) `{resource?}`: mint a new key; older keys stay, so messages already
+    stored still read. When an agent calls, the new key goes to the messaging service's
+    `setPublicKey` over the chain, and is removed again if that fails. When the messaging service
+    calls (its `rotatePublicKey`; the person token's `agent_id` is on the host of `resource`) there
+    is no call back. That is the no-loop rule.
+  - `GET /keys` (`getKeys`): all keys.
+- Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, a compact JWE:
   [spec/container.md](spec/container.md). Decryption is Web Crypto directly (`src/jwe.ts`), no
   library, checked against the vectors in `spec/vectors/`.
 - Private keys at rest are AES-256-GCM wrapped under the `KEK` secret with `(iss, sub, kid)` as AAD.
-- Ciphertext up to 1 MiB. In the Workers test runtime a 1 MiB decrypt round trip (signature
-  verification included) is about 60 ms wall; the Free-plan CPU figure on a real deployment is
-  still to be read from Workers Logs.
+- Text up to 64 KB; the JWE up to 96 KB at the messaging service.
+- `openapi.json` and `/.well-known/aauth-resource.json` are served with
+  `Cache-Control: public, max-age=300` and an `ETag`.
 
 ## Use it from an agent
 
 Setup is done for you: secret.agent.coop `createAccount` fetches your key from here over an AAuth
-call chain and registers it (no consent card for this service at that point). The manual path is
-`connect_resources [{resource: "decrypt.aauth.dev"}]`, `invoke getKey`, then `addKey {kid, alg, jwk}`
-at secret. To read a message: `getMessages` at secret.agent.coop for the id, then `getMessage` here
-with `{path_params: {id}, query: "resource=https://secret.agent.coop"}`. The manual path is
-`getMessage` at secret (JSON form), then `decryptEnvelope` here with `{protected, iv, tag, ciphertext}`
-where `ciphertext` is the `blob` field. The first read
-shows this service's consent card, since it sees the plaintext. The full flow is in the
+call chain (no consent card for this service at that point). To read a message: `listMessages` at
+secret.agent.coop for the id, then
+`invoke {resource: "decrypt.aauth.dev", op_id: "readMessage", body: {id: "msg_…"}}`. Put the fields
+directly in `body`. The first read shows this service's consent card, since it sees the plaintext.
+The full flow is in the
 [secret-agent-coop skill](https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop).
 
 ## Run your own
@@ -53,9 +60,10 @@ npm run generate-key | npx wrangler secret put AGENT_KEY
 npx wrangler deploy                              # set your own route / custom domain in wrangler.jsonc
 ```
 
-Then `connect_resources` your host from your agent, `getKey`, and register that key at your
-messaging service (secret.agent.coop `addKey`). secret does not need to know where the private key
-lives (plan D16).
+Set `ORIGIN` and `DEFAULT_RESOURCE` in `wrangler.jsonc`. Then tell your messaging service to use it:
+at secret.agent.coop, `setServices {read_service: "https://<your host>"}`. The person approves that
+one call; secret checks your host's metadata and operations, fetches the key with `getKey` over a
+call chain, and from then on `listMessages` names your host as `read_message_with`.
 
 ## Develop
 

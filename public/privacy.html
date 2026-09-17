@@ -31,14 +31,14 @@ code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:
 
 <h2>What it sees</h2>
 <ul>
-  <li><strong>Plaintext, while decrypting</strong>. <code>decryptEnvelope</code> decrypts a message and returns it to your agent. The plaintext exists in memory for that call and is not kept. This is why the service asks for your consent by name and is not folded into the messaging service's consent: anything that sees plaintext should be one you approved.</li>
-  <li><strong>Ciphertext, when you ask it to fetch</strong>. <code>getMessage</code> fetches one message from the messaging service your agent names, over a call chain: this service asks your Person Server for a token for that service, downloads the envelope (which marks it downloaded there), and decrypts it. It sees the message id, sender and recipient addresses, and the ciphertext for that call, and keeps none of them. It fetches only the message your agent asked for, only when asked.</li>
+  <li><strong>Plaintext, while decrypting</strong>. <code>readMessage</code> decrypts a message and returns its text to your agent. The plaintext exists in memory for that call and is not kept. This is why the service asks for your consent by name and is not folded into the messaging service's consent: anything that sees plaintext should be one you approved.</li>
+  <li><strong>Ciphertext, when you ask it to fetch</strong>. <code>readMessage</code> fetches one message from your messaging service, over a call chain: this service asks your Person Server for a token for that service, downloads the message (which marks it downloaded there), and decrypts it. It sees the message id, sender and recipient addresses and the sender's name, and the ciphertext for that call, and keeps none of them. It fetches only the message your agent asked for, only when asked.</li>
   <li><strong>Nothing during setup</strong>. When secret.agent.coop calls <code>getKey</code> for you over a call chain, this service sees a token naming your identity here and that secret asked. It learns nothing else.</li>
 </ul>
 
 <h2>What it does not do</h2>
 <ul>
-  <li>It does not fetch ciphertext on its own. It fetches a message only when your agent calls <code>getMessage</code> for it; with <code>decryptEnvelope</code> your agent brings the ciphertext instead.</li>
+  <li>It does not fetch ciphertext on its own. It fetches a message only when your agent calls <code>readMessage</code> for it. When you rotate your key it tells your messaging service the new public key (<code>setPublicKey</code>), and nothing else.</li>
   <li>It does not share keys or events with anyone. Events go to the operator's log pipeline for reliability and abuse handling only.</li>
 </ul>
 
