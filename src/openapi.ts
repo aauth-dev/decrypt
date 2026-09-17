@@ -53,11 +53,29 @@ export function openapi(origin: string) {
           },
         },
       },
+      '/messages/{id}': {
+        get: {
+          operationId: 'getMessage',
+          summary:
+            'Fetch one message from your messaging service and decrypt it, in one call. This service gets a person token for `resource` from your Person Server over a call chain (no card), downloads the envelope there (which marks it downloaded), and decrypts with your key; the ciphertext never passes through your agent. Returns {id, from, to, resource, kid, size, plaintext, warnings}. A system message comes back as the messaging service sent it. Refusals from the messaging service pass through with step "get_message".',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: 'The message id from getMessages at your messaging service.' },
+            { name: 'resource', in: 'query', required: true, schema: { type: 'string', format: 'uri' }, description: 'The messaging service holding the message, as an https origin, e.g. https://secret.agent.coop.' },
+          ],
+          responses: {
+            '200': { description: 'Plaintext', content: { 'application/json': { schema: { $ref: '#/components/schemas/Decrypted' } } } },
+            '400': { description: 'invalid_request, decrypt_failed' },
+            '404': { description: 'not_found at the messaging service, or unknown_kid' },
+            '502': { description: 'the chain failed (step person_token) or the messaging service did not answer usefully (step get_message)' },
+          },
+        },
+      },
     },
     components: {
       schemas: {
         Key: { type: 'object', properties: { kid: { type: 'string' }, alg: { type: 'string', enum: ['ECDH-ES'] }, jwk: { type: 'object' }, created_at: { type: 'string' }, retired_at: { type: 'string' } } },
         Decrypted: { type: 'object', properties: {
+          id: { type: 'string', description: 'getMessage only' }, from: { type: 'string', description: 'getMessage only' }, to: { type: 'string', description: 'getMessage only' }, resource: { type: 'string', description: 'getMessage only' },
           kid: { type: 'string' }, size: { type: 'integer' },
           plaintext: { type: 'object', description: 'The message object {text, attachments[]} when the plaintext is JSON.' },
           text: { type: 'string', description: 'The plaintext as UTF-8 when it is not a JSON object.' },

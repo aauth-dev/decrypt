@@ -8,8 +8,9 @@ brings the ciphertext, and secret registers whatever key you give it.
 
 **Status: stage 1 built (2026-09-12), moved to decrypt.aauth.dev (2026-09-14).** `getKey`,
 `rotateKey`, `getKeys`, `decryptEnvelope`; multi-tenant with keys in D1 wrapped under a KEK secret;
-interop vectors from `jose` and `jwcrypto`; `/.well-known/aauth-agent.json` for the coming chained
-download. Single-tenant mode (keys in secrets, no D1) and the chained download are later stages.
+interop vectors from `jose` and `jwcrypto`. **Chained download (D1) built 2026-09-16**: `getMessage`
+fetches the envelope from the messaging service as an AAuth intermediary and decrypts it.
+Single-tenant mode (keys in secrets, no D1) is a later stage.
 
 ## What it is
 
@@ -18,7 +19,8 @@ download. Single-tenant mode (keys in secrets, no D1) and the chained download a
   Identity is the `(iss, sub)` pair from the person token, directed to this service. It never sees an
   email address; events carry a hash of the identity.
 - Operations (`/openapi.json`): `GET /key` current public key, created if none · `POST /key` mint a
-  new key, older keys stay decryptable · `GET /keys` all keys · `POST /decrypt` decrypt one message.
+  new key, older keys stay decryptable · `GET /keys` all keys · `POST /decrypt` decrypt one message the agent brings · `GET /messages/{id}?resource=`
+  fetch one message from the messaging service over a call chain and decrypt it.
 - Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, stored disassembled:
   [spec/container.md](spec/container.md). Decryption is Web Crypto directly (`src/jwe.ts`), no
   library, checked against the vectors in `spec/vectors/`.
@@ -32,8 +34,10 @@ download. Single-tenant mode (keys in secrets, no D1) and the chained download a
 Setup is done for you: secret.agent.coop `createAccount` fetches your key from here over an AAuth
 call chain and registers it (no consent card for this service at that point). The manual path is
 `connect_resources [{resource: "decrypt.aauth.dev"}]`, `invoke getKey`, then `addKey {kid, alg, jwk}`
-at secret. To read a message: `getMessage` at secret.agent.coop (JSON form), then `decryptEnvelope`
-here with `{protected, iv, tag, ciphertext}` where `ciphertext` is the `blob` field. The first read
+at secret. To read a message: `getMessages` at secret.agent.coop for the id, then `getMessage` here
+with `{path_params: {id}, query: "resource=https://secret.agent.coop"}`. The manual path is
+`getMessage` at secret (JSON form), then `decryptEnvelope` here with `{protected, iv, tag, ciphertext}`
+where `ciphertext` is the `blob` field. The first read
 shows this service's consent card, since it sees the plaintext. The full flow is in the
 [secret-agent-coop skill](https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop).
 
@@ -45,6 +49,7 @@ npx wrangler d1 create decrypt-agent-coop        # put the id in wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote
 npm run generate-kek | npx wrangler secret put KEK
 npm run generate-key | npx wrangler secret put SIGNING_KEY
+npm run generate-key | npx wrangler secret put AGENT_KEY
 npx wrangler deploy                              # set your own route / custom domain in wrangler.jsonc
 ```
 

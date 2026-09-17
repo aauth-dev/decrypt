@@ -15,7 +15,7 @@ check "aauth-agent.json issuer matches origin and names the jwks" "$(echo "$AGEN
 JWKS=$(curl -sf "$BASE/.well-known/jwks.json")
 check "jwks key is Ed25519, no private material" "$(echo "$JWKS" | jq -e '.keys[0].crv == "Ed25519" and .keys[0].alg == "Ed25519" and .keys[0].d == null' >/dev/null 2>&1 && echo true || echo false)"
 SPEC=$(curl -sf "$BASE/openapi.json")
-check "openapi lists getKey and decryptEnvelope" "$(echo "$SPEC" | jq -e '.paths["/key"].get.operationId == "getKey" and .paths["/decrypt"].post.operationId == "decryptEnvelope"' >/dev/null 2>&1 && echo true || echo false)"
+check "openapi lists getKey, decryptEnvelope, getMessage" "$(echo "$SPEC" | jq -e '.paths["/key"].get.operationId == "getKey" and .paths["/decrypt"].post.operationId == "decryptEnvelope" and .paths["/messages/{id}"].get.operationId == "getMessage"' >/dev/null 2>&1 && echo true || echo false)"
 for p in / /privacy /robots.txt /llms.txt /sitemap.xml /health; do check "GET $p is 200" "$([ "$(code "$BASE$p")" = "200" ] && echo true || echo false)"; done
 H=$(curl -s -D - -o /dev/null "$BASE/key")
 check "unsigned GET /key is 401 requirement=person-token" "$(echo "$H" | grep -q '^HTTP/[0-9.]* 401' && echo "$H" | grep -qi 'aauth-requirement: requirement=person-token' && echo true || echo false)"

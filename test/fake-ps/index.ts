@@ -1,22 +1,32 @@
-// A fake Person Server for the test build (plan S4/S5). Runs inside the
-// Workers test isolate: issues person tokens with a sub directed per
-// audience, exchanges resource tokens for auth tokens (verifying the
-// resource token's signature against the resource's JWKS), honours
-// login_hint when the scope includes `email`, and auto-approves. Its
-// well-known document and JWKS are served through a mocked global fetch,
-// since @aauth/resource discovers `{iss}/.well-known/{dwk}` on the global.
+// A fake Person Server for the test build, copied from
+// secret-agent-coop/service/test/fake-ps (a shared package is increment 7).
+// Runs inside the Workers test isolate: issues person tokens with a sub
+// directed per audience, exchanges resource tokens for auth tokens, and
+// serves an HTTP person_token_endpoint for call chaining: it verifies the
+// intermediary's signed request and agent token (against the issuer's
+// aauth-agent.json → jwks_uri, through SELF), verifies the upstream_token,
+// and issues a person token for the requested resource with no
+// interaction. Its documents are served through a mocked global fetch.
+//
+// Also here: a fake messaging service at SECRET (deliberately not an
+// agent.coop host: the Worker under test must take the target as a
+// parameter) with /keys, /messages, /messages/{id}/blob, verifying the
+// signature and the chained person token and recording what arrived.
 //
 // Also here: an Agent that plays the AAuth MCP against the Worker under
 // test — signs requests with RFC 9421 (jwt scheme) and follows
 // AAuth-Requirement challenges the way @aauth/proxy does.
 
 import { SELF } from 'cloudflare:test'
-import { calculateThumbprint, fetch as httpsigFetch } from '@hellocoop/httpsig'
+import { calculateThumbprint, fetch as httpsigFetch, verify as httpsigVerify } from '@hellocoop/httpsig'
 import { decodeJwt, decodeProtectedHeader, importJWK, jwtVerify, SignJWT } from 'jose'
 import { parseRequirementHeader } from '@aauth/protocol'
 
 export const PS = 'https://ps.fake.test'
+/** the Worker under test */
 export const RESOURCE = 'https://decrypt.aauth.dev'
+/** the fake messaging service in the outbound mock */
+export const SECRET = 'https://secret.fake.test'
 
 export interface TestKey {
   privateKey: CryptoKey
@@ -51,18 +61,36 @@ export function cnfJwk(key: TestKey): JsonWebKey {
 // Tests and the worker under test share one isolate, so replacing
 // globalThis.fetch serves the PS's discovery documents. SELF.fetch and
 // bindings are unaffected.
-const routes = new Map<string, () => Response>()
+type RouteHandler = (req: Request) => Response | Promise<Response>
+const routes = new Map<string, RouteHandler>()
+/** handlers keyed by a URL prefix, for paths with ids and queries */
+const prefixRoutes = new Map<string, RouteHandler>()
 let installed = false
 export function installMockFetch(): void {
   if (installed) return
   installed = true
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    const handler = routes.get(href)
-    if (!handler) throw new Error(`unmocked outbound fetch: ${href}`)
-    return handler()
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = new Request(input, init)
+    const url = new URL(req.url)
+    const handler = routes.get(req.url) ?? routes.get(url.origin + url.pathname) ?? [...prefixRoutes.entries()].find(([p]) => req.url.startsWith(p))?.[1]
+    if (!handler) throw new Error(`unmocked outbound fetch: ${req.url}`)
+    return handler(req)
   }) as typeof fetch
 }
+
+/** RFC 9421 verification of a mocked outbound request, jwt scheme. */
+async function verifySigned(req: Request, opts: { requireContentDigest?: boolean } = {}) {
+  const url = new URL(req.url)
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await req.arrayBuffer())
+  const sig = await httpsigVerify(
+    { method: req.method, authority: url.host, path: url.pathname, query: url.search ? url.search.slice(1) : undefined, headers: req.headers, ...(body ? { body } : {}) },
+    opts,
+  )
+  return { sig, body }
+}
+
+const problem = (status: number, error: string, detail: string) =>
+  Response.json({ error, detail }, { status, headers: { 'content-type': 'application/problem+json' } })
 
 // ── The fake PS ──
 
@@ -74,31 +102,126 @@ export interface Person {
 }
 
 export class FakePS {
-  readonly iss = PS
   private key!: TestKey
   private issued = new Set<string>()
+  /** every directed sub this PS has minted, back to the person (Hellō has its own record) */
+  private subs = new Map<string, Person>()
+  /** POSTs to the HTTP person_token_endpoint (the chain), for idempotency tests */
+  personTokenRequests = 0
+  /** the last agent token an intermediary presented at the person_token_endpoint */
+  lastAgentToken?: string
+  /** when set, the upstream token's aud must equal this instead of the agent token's iss (to force invalid_upstream_token) */
+  expectedIntermediary?: string
+
+  /** A second instance with another iss plays an issuer secret does not trust for email. */
+  constructor(readonly iss: string = PS) {}
 
   async init(): Promise<this> {
     this.key = await generateEd25519()
     installMockFetch()
-    routes.set(`${PS}/.well-known/aauth-person.json`, () =>
+    routes.set(`${this.iss}/aauth/token/person`, (req) => this.personTokenEndpoint(req))
+    routes.set(`${this.iss}/.well-known/aauth-person.json`, () =>
       Response.json({
-        issuer: PS,
-        jwks_uri: `${PS}/jwks.json`,
-        person_token_endpoint: `${PS}/aauth/token/person`,
-        auth_token_endpoint: `${PS}/aauth/token/auth`,
+        issuer: this.iss,
+        jwks_uri: `${this.iss}/jwks.json`,
+        person_token_endpoint: `${this.iss}/aauth/token/person`,
+        auth_token_endpoint: `${this.iss}/aauth/token/auth`,
         scopes_supported: ['email', 'profile'],
         claims_supported: ['sub', 'email', 'name'],
       }),
     )
-    routes.set(`${PS}/jwks.json`, () => Response.json({ keys: [this.key.publicJwk] }))
+    routes.set(`${this.iss}/jwks.json`, () => Response.json({ keys: [this.key.publicJwk] }))
     return this
   }
 
   /** Pairwise pseudonymous sub per audience (protocol §Directed Identifiers). */
   async sub(person: Person, aud: string): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${person.handle}|${aud}`))
-    return b64url(new Uint8Array(digest))
+    const sub = b64url(new Uint8Array(digest))
+    this.subs.set(sub, person)
+    return sub
+  }
+
+  private async publicKey() {
+    const { alg: _a, kid: _k, key_ops: _o, ...jwk } = this.key.publicJwk as JsonWebKey & { alg?: string; kid?: string; key_ops?: string[] }
+    return importJWK(jwk as never, 'Ed25519')
+  }
+
+  /**
+   * POST /aauth/token/person over HTTP (D26, call chaining only; agents in
+   * these tests get their person tokens in-process). Mirrors what Hellō
+   * checks (Wallet svr/src/aauth/verify-upstream-token.js): the signed
+   * request, the agent token against the issuer's aauth-agent.json →
+   * jwks_uri, then the upstream token: issued by this PS, person or auth
+   * typ, aud equal to the agent token's iss, not expired. The person is the
+   * one behind the upstream sub. Issues a person token for body.resource
+   * with cnf = the agent token's key. No interaction.
+   */
+  private async personTokenEndpoint(req: Request): Promise<Response> {
+    this.personTokenRequests++
+    if (req.method !== 'POST') return problem(405, 'method_not_allowed', 'POST only')
+    const { sig, body } = await verifySigned(req, { requireContentDigest: true })
+    if (!sig.verified) return problem(401, 'signature_verification_failed', sig.error ?? 'bad signature')
+    if (sig.keyType !== 'jwt' || !sig.jwt) return problem(401, 'invalid_agent_token', 'Signature-Key must be sig=jwt')
+    const agentJwt = sig.jwt.raw
+    const header = decodeProtectedHeader(agentJwt)
+    if (header.typ !== 'aa-agent+jwt' || header.alg !== 'Ed25519' || typeof header.kid !== 'string') return problem(401, 'invalid_agent_token', `header typ=${String(header.typ)} alg=${String(header.alg)} kid=${String(header.kid)}`)
+    const agent = decodeJwt(agentJwt) as Record<string, unknown>
+    if (typeof agent.iss !== 'string' || agent.dwk !== 'aauth-agent.json' || typeof agent.sub !== 'string' || !/^aauth:[A-Za-z0-9\-_+.]+@[^@\s]+$/.test(agent.sub)) {
+      return problem(401, 'invalid_agent_token', 'iss, dwk aauth-agent.json, and sub aauth:local@domain are required')
+    }
+    const cnf = (agent.cnf as { jwk?: JsonWebKey } | undefined)?.jwk
+    if (!cnf) return problem(401, 'invalid_agent_token', 'cnf.jwk required')
+    // The issuer's agent document and JWKS, through SELF: the issuer is the Worker under test.
+    const doc = await SELF.fetch(`${agent.iss}/.well-known/aauth-agent.json`)
+    if (doc.status !== 200) return problem(401, 'invalid_agent_token', `no aauth-agent.json at ${agent.iss}`)
+    const { jwks_uri } = (await doc.json()) as { jwks_uri: string }
+    const jwks = (await (await SELF.fetch(jwks_uri)).json()) as { keys: Array<JsonWebKey & { kid?: string; alg?: string }> }
+    const key = jwks.keys.find((k) => k.kid === header.kid)
+    if (!key) return problem(401, 'invalid_agent_token', `kid ${header.kid} not at ${jwks_uri}`)
+    const { alg: _a, kid: _k, key_ops: _o, ...importable } = key
+    try {
+      await jwtVerify(agentJwt, await importJWK(importable as never, 'Ed25519'), { issuer: agent.iss })
+    } catch (err) {
+      return problem(401, 'invalid_agent_token', `signature: ${String(err)}`)
+    }
+    this.lastAgentToken = agentJwt
+
+    const text = new TextDecoder().decode(body ?? new Uint8Array())
+    let params: Record<string, unknown>
+    try {
+      params = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      return problem(400, 'invalid_request', 'JSON body required')
+    }
+    if (typeof params.resource !== 'string') return problem(400, 'invalid_request', 'resource required')
+    if (typeof params.upstream_token !== 'string') return problem(400, 'invalid_request', 'this fake only serves chained requests (upstream_token)')
+    if (params.mission_s256) return problem(400, 'invalid_request', 'mission_s256 must not accompany upstream_token')
+
+    // The upstream token.
+    let upstream: Record<string, unknown>
+    try {
+      upstream = (await jwtVerify(params.upstream_token, await this.publicKey(), { issuer: this.iss })).payload as Record<string, unknown>
+    } catch (err) {
+      return problem(400, 'invalid_upstream_token', `not issued by this PS or expired: ${String(err)}`)
+    }
+    const upstreamTyp = decodeProtectedHeader(params.upstream_token).typ
+    if (upstreamTyp !== 'aa-person+jwt' && upstreamTyp !== 'aa-auth+jwt') return problem(400, 'invalid_upstream_token', `typ ${String(upstreamTyp)}`)
+    const mustEqual = this.expectedIntermediary ?? agent.iss
+    if (upstream.aud !== mustEqual) return problem(400, 'invalid_upstream_token', `aud ${String(upstream.aud)} is not the intermediary ${mustEqual}`)
+    const person = typeof upstream.sub === 'string' ? this.subs.get(upstream.sub) : undefined
+    if (!person) return problem(400, 'invalid_upstream_token', 'unknown sub')
+
+    const personToken = await this.sign('aa-person+jwt', {
+      iss: this.iss, dwk: 'aauth-person.json', aud: params.resource, sub: await this.sub(person, params.resource), cnf: { jwk: cnf },
+    }, 600)
+    return Response.json({ person_token: personToken, expires_in: 600 })
+  }
+
+  /** Verify a person token this PS issued, for the fake decrypt. */
+  async verifyPersonToken(jwt: string, aud: string): Promise<Record<string, unknown>> {
+    if (decodeProtectedHeader(jwt).typ !== 'aa-person+jwt') throw new Error('not a person token')
+    return (await jwtVerify(jwt, await this.publicKey(), { issuer: this.iss, audience: aud })).payload as Record<string, unknown>
   }
 
   private async sign(typ: string, claims: Record<string, unknown>, lifetime: number): Promise<string> {
@@ -112,7 +235,7 @@ export class FakePS {
 
   async personToken(person: Person, agent: TestKey, aud = RESOURCE, overrides: Record<string, unknown> = {}): Promise<string> {
     return this.sign('aa-person+jwt', {
-      iss: PS, dwk: 'aauth-person.json', aud, sub: await this.sub(person, aud), cnf: { jwk: cnfJwk(agent) }, ...overrides,
+      iss: this.iss, dwk: 'aauth-person.json', aud, sub: await this.sub(person, aud), cnf: { jwk: cnfJwk(agent) }, ...overrides,
     }, 600)
   }
 
@@ -125,13 +248,13 @@ export class FakePS {
     const header = decodeProtectedHeader(resourceToken)
     if (header.typ !== 'aa-resource+jwt') throw new Error(`fake PS: resource token typ ${header.typ}`)
     const rt = decodeJwt(resourceToken) as Record<string, unknown>
-    if (rt.aud !== PS) throw new Error(`fake PS: resource token aud ${String(rt.aud)} is not me`)
-    if (rt.ps !== PS) throw new Error('fake PS: resource token ps is not me')
+    if (rt.aud !== this.iss) throw new Error(`fake PS: resource token aud ${String(rt.aud)} is not me`)
+    if (rt.ps !== this.iss) throw new Error('fake PS: resource token ps is not me')
     const jwksRes = await SELF.fetch(`${String(rt.iss)}/.well-known/jwks.json`)
     const jwks = (await jwksRes.json()) as { keys: JsonWebKey[] }
     const jwk = jwks.keys.find((k) => (k as { kid?: string }).kid === header.kid) ?? jwks.keys[0]
     const { alg: _a, ...importable } = jwk as JsonWebKey & { alg?: string }
-    await jwtVerify(resourceToken, await importJWK(importable as never, 'Ed25519'), { audience: PS })
+    await jwtVerify(resourceToken, await importJWK(importable as never, 'Ed25519'), { audience: this.iss })
     const presented = decodeJwt(presentedToken) as Record<string, unknown>
     if (presented.jti !== rt.presented_jti) throw new Error('fake PS: presented_jti mismatch')
     if (presented.sub !== rt.sub) throw new Error('fake PS: sub mismatch')
@@ -140,7 +263,7 @@ export class FakePS {
 
     const scope = String(rt.scope ?? '')
     const claims: Record<string, unknown> = {
-      iss: PS, dwk: 'aauth-person.json', aud: rt.iss, ps: PS, sub: rt.sub, cnf: { jwk: cnfJwk(agent) }, scope,
+      iss: this.iss, dwk: 'aauth-person.json', aud: rt.iss, ps: this.iss, sub: rt.sub, cnf: { jwk: cnfJwk(agent) }, scope,
     }
     if (scope.split(/\s+/).includes('email')) {
       // login_hint selects an address the person holds; otherwise the person
@@ -158,6 +281,189 @@ export class FakePS {
 
 export interface Person {
   altEmails?: string[]
+}
+
+// ── The fake messaging service ──
+// What decrypt chains to. Verifies the signature and the chained person
+// token (issued by the fake PS, aud SECRET, cnf = the signing key), then
+// behaves like secret.agent.coop's getKeys, sendMessage, putBlob, and
+// getMessage for a small in-memory world: `recipients` with a key,
+// `connected` addresses, `inbox` messages waiting per recipient sub.
+
+export interface RecipientKey {
+  kid: string
+  alg: 'ECDH-ES'
+  jwk: JsonWebKey
+  privateJwk: JsonWebKey
+}
+export interface ReceivedMessage {
+  id: string
+  to: string
+  from?: string
+  protected: string
+  iv: string
+  tag: string
+  size: number
+  kid: string
+  idempotency_key?: string
+  blob?: Uint8Array
+  blobContentType?: string
+  /** the sub the chained person token carried */
+  sub: string
+}
+
+export class FakeSecret {
+  readonly origin = SECRET
+  recipients = new Map<string, RecipientKey>()
+  connected = new Set<string>()
+  received: ReceivedMessage[] = []
+  /** "METHOD path" of every authenticated request, in order */
+  requests: string[] = []
+  /** subs seen on chained person tokens */
+  seen: string[] = []
+  /** messages waiting for download, by id; `sub` is the recipient's sub at SECRET */
+  inbox = new Map<string, InboxMessage>()
+  /** Accept header of each GET /messages/{id} */
+  downloadAccepts: string[] = []
+  /** the next POST /messages answers with this */
+  failNextSend?: { status: number; error: string; detail?: string }
+  private counter = 0
+
+  constructor(readonly ps: FakePS) {
+    installMockFetch()
+    routes.set(`${SECRET}/keys`, (req) => this.getKeys(req))
+    routes.set(`${SECRET}/messages`, (req) => this.postMessage(req))
+    prefixRoutes.set(`${SECRET}/messages/`, (req) => (req.method === 'GET' ? this.getMessage(req) : this.putBlob(req)))
+  }
+
+  /** A connected person with a registered key. Returns the key so tests can decrypt. */
+  async addRecipient(address: string): Promise<RecipientKey> {
+    const pair = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair
+    const priv = (await crypto.subtle.exportKey('jwk', pair.privateKey)) as JsonWebKey
+    const jwk: JsonWebKey = { kty: 'EC', crv: 'P-256', x: priv.x, y: priv.y }
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y })))
+    const key: RecipientKey = { kid: b64url(new Uint8Array(digest)), alg: 'ECDH-ES', jwk, privateJwk: { ...jwk, d: priv.d } }
+    this.recipients.set(address, key)
+    this.connected.add(address)
+    return key
+  }
+
+  private async auth(req: Request): Promise<{ sub: string; body?: Uint8Array } | Response> {
+    const { sig, body } = await verifySigned(req)
+    if (!sig.verified) return problem(401, 'signature_verification_failed', sig.error ?? 'bad signature')
+    if (sig.keyType !== 'jwt' || !sig.jwt) return problem(401, 'person_token_required', 'sig=jwt required')
+    let claims: Record<string, unknown>
+    try {
+      claims = await this.ps.verifyPersonToken(sig.jwt.raw, SECRET)
+    } catch (err) {
+      return problem(401, 'invalid_token', String(err))
+    }
+    const cnf = (claims.cnf as { jwk?: JsonWebKey } | undefined)?.jwk
+    if (!cnf || (await calculateThumbprint(cnf)) !== sig.thumbprint) return problem(401, 'cnf_mismatch', 'the request is not signed with the token\'s key')
+    const url = new URL(req.url)
+    this.requests.push(`${req.method} ${url.pathname}`)
+    this.seen.push(String(claims.sub))
+    return { sub: String(claims.sub), body }
+  }
+
+  private async getKeys(req: Request): Promise<Response> {
+    const a = await this.auth(req)
+    if (a instanceof Response) return a
+    const address = new URL(req.url).searchParams.get('address') ?? ''
+    if (!this.connected.has(address)) return Response.json({ error: 'not_connected', detail: 'no connection with that address' }, { status: 404 })
+    const key = this.recipients.get(address)
+    if (!key) return Response.json({ error: 'recipient_has_no_key', detail: 'the recipient has not registered a public key yet' }, { status: 409 })
+    return Response.json({ address, keys: [{ kid: key.kid, alg: key.alg, jwk: key.jwk, created_at: new Date().toISOString() }] })
+  }
+
+  private async postMessage(req: Request): Promise<Response> {
+    const a = await this.auth(req)
+    if (a instanceof Response) return a
+    if (!(req.headers.get('content-type') ?? '').startsWith('application/json')) return problem(400, 'invalid_json', 'application/json required')
+    if (this.failNextSend) {
+      const f = this.failNextSend
+      this.failNextSend = undefined
+      return Response.json({ error: f.error, detail: f.detail ?? f.error }, { status: f.status })
+    }
+    const m = JSON.parse(new TextDecoder().decode(a.body)) as Record<string, unknown>
+    if (typeof m.idempotency_key === 'string') {
+      const prior = this.received.find((r) => r.idempotency_key === m.idempotency_key && r.sub === a.sub)
+      if (prior) return Response.json({ id: prior.id, to: prior.to, from: prior.from, size: prior.size, kid: prior.kid, replayed: true, ...(prior.blob ? { blob_at: new Date().toISOString() } : {}) })
+    }
+    const to = String(m.to)
+    if (!this.connected.has(to)) return Response.json({ error: 'not_connected' }, { status: 404 })
+    const key = this.recipients.get(to)
+    if (!key) return Response.json({ error: 'recipient_has_no_key' }, { status: 409 })
+    for (const [f, len] of [['iv', 12], ['tag', 16]] as const) {
+      const v = m[f]
+      if (typeof v !== 'string' || b64urlDecode(v).length !== len) return Response.json({ error: 'invalid_envelope', field: f }, { status: 400 })
+    }
+    if (typeof m.protected !== 'string') return Response.json({ error: 'invalid_envelope', field: 'protected' }, { status: 400 })
+    const header = JSON.parse(new TextDecoder().decode(b64urlDecode(m.protected))) as Record<string, unknown>
+    if (header.alg !== 'ECDH-ES' || header.enc !== 'A256GCM') return Response.json({ error: 'invalid_envelope', field: 'protected', detail: 'alg/enc' }, { status: 400 })
+    if (header.kid !== key.kid) return Response.json({ error: 'unknown_kid', keys: [key.kid] }, { status: 409 })
+    const epk = header.epk as Record<string, unknown> | undefined
+    if (!epk || epk.kty !== 'EC' || epk.crv !== 'P-256') return Response.json({ error: 'invalid_envelope', field: 'protected', detail: 'epk' }, { status: 400 })
+    const size = m.size
+    if (typeof size !== 'number' || !Number.isInteger(size) || size < 1 || size > 1_048_576) return Response.json({ error: 'invalid_request', field: 'size' }, { status: 400 })
+    const id = `msg_fake${String(++this.counter).padStart(20, '0')}_000`
+    const rec: ReceivedMessage = { id, to, from: typeof m.from === 'string' ? m.from : undefined, protected: m.protected, iv: m.iv as string, tag: m.tag as string, size, kid: key.kid, idempotency_key: typeof m.idempotency_key === 'string' ? m.idempotency_key : undefined, sub: a.sub }
+    this.received.push(rec)
+    return Response.json({ id, to, from: rec.from ?? 'mailto:sender@fake.test', size, kid: key.kid, state: 'new', upload_until: new Date(Date.now() + 600_000).toISOString() }, { status: 201 })
+  }
+
+  /** secret's getMessage: JSON with the base64url blob when asked, else raw bytes with x-jwe-* headers. */
+  private async getMessage(req: Request): Promise<Response> {
+    const a = await this.auth(req)
+    if (a instanceof Response) return a
+    const id = decodeURIComponent(new URL(req.url).pathname.slice('/messages/'.length))
+    const m = this.inbox.get(id)
+    if (!m || m.sub !== a.sub) return Response.json({ error: 'not_found' }, { status: 404 })
+    const accept = req.headers.get('accept') ?? ''
+    this.downloadAccepts.push(accept)
+    m.state = 'downloaded'
+    if (accept.includes('application/json')) {
+      return Response.json({ id: m.id, from: m.from, to: m.to, kid: m.kid, protected: m.protected, iv: m.iv, tag: m.tag, size: m.blob.byteLength, blob: b64url(m.blob) })
+    }
+    return new Response(m.blob as BodyInit, { headers: { 'content-type': 'application/octet-stream', 'x-jwe-protected': m.protected, 'x-jwe-iv': m.iv, 'x-jwe-tag': m.tag } })
+  }
+
+  private async putBlob(req: Request): Promise<Response> {
+    const a = await this.auth(req)
+    if (a instanceof Response) return a
+    const m = /\/messages\/([^/]+)\/blob$/.exec(new URL(req.url).pathname)
+    const rec = m && this.received.find((r) => r.id === decodeURIComponent(m[1]))
+    if (!rec) return Response.json({ error: 'not_found' }, { status: 404 })
+    if (rec.blob) return Response.json({ error: 'blob_exists' }, { status: 409 })
+    const ct = req.headers.get('content-type') ?? ''
+    if (!ct.startsWith('application/octet-stream')) return Response.json({ error: 'invalid_request', detail: `expected the canonical octet-stream body, got ${ct}` }, { status: 400 })
+    const bytes = a.body ?? new Uint8Array()
+    if (bytes.byteLength !== rec.size) return Response.json({ error: 'size_mismatch', detail: `declared ${rec.size} bytes, received ${bytes.byteLength}` }, { status: 409 })
+    rec.blob = bytes
+    rec.blobContentType = ct
+    return Response.json({ id: rec.id, to: rec.to, size: rec.size, blob_at: new Date().toISOString() })
+  }
+}
+
+export interface InboxMessage {
+  id: string
+  sub: string
+  from: string
+  to: string
+  kid: string
+  protected: string
+  iv: string
+  tag: string
+  blob: Uint8Array
+  state: 'new' | 'downloaded'
+}
+
+function b64urlDecode(str: string): Uint8Array {
+  const padded = str + '='.repeat((4 - (str.length % 4)) % 4)
+  const bin = atob(padded.replace(/-/g, '+').replace(/_/g, '/'))
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }
 
 // ── The agent (plays the AAuth MCP) ──

@@ -18,6 +18,7 @@
     "migrate:local": "wrangler d1 migrations apply DB --local"
   },
   "dependencies": {
+    "@aauth/agent": "^4.1.1",
     "@aauth/protocol": "^2.0.0",
     "@aauth/resource": "^3.0.0",
     "@hellocoop/httpsig": "^2.6.0",

@@ -9,6 +9,7 @@ Reach it with the AAuth MCP: `connect_resources [{resource: "decrypt.aauth.dev"}
 - `getKey`: the person's current public key `{kid, alg: "ECDH-ES", jwk}`, created on first call. secret.agent.coop `createAccount` fetches and registers it for you over a call chain; the manual path is `addKey` there with exactly these values.
 - `rotateKey`: mint a new key; older keys keep decrypting. Register the new one at your messaging service.
 - `getKeys`: all keys with state.
+- `getMessage`: `GET /messages/{id}?resource=https://secret.agent.coop`. Fetches the message from that messaging service over a call chain (a person token from your Person Server, no card) and decrypts it. Returns `{id, from, to, resource, kid, size, plaintext: {text}, warnings}`. This is the one call to read; the ciphertext never passes through your agent. The download marks the message downloaded there.
 - `decryptEnvelope`: body `{protected, iv, tag, ciphertext}` where `ciphertext` is the base64url `blob` from your messaging service (secret.agent.coop `getMessage`). Returns `{kid, size, plaintext: {text}, warnings}`. Also accepts raw octet-stream with `?protected=&iv=&tag=`.
 
 ## Format
@@ -18,7 +19,7 @@ JWE ECDH-ES + A256GCM on P-256, stored disassembled: https://github.com/aauth-de
 ## Links
 
 - Metadata: https://decrypt.aauth.dev/.well-known/aauth-resource.json
-- Agent document (call chaining): https://decrypt.aauth.dev/.well-known/aauth-agent.json
+- Agent document (call chaining, `aauth:read@decrypt.aauth.dev`): https://decrypt.aauth.dev/.well-known/aauth-agent.json
 - OpenAPI: https://decrypt.aauth.dev/openapi.json
 - Privacy: https://decrypt.aauth.dev/privacy
 - Code and self-hosting: https://github.com/aauth-dev/decrypt

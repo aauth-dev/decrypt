@@ -25,7 +25,7 @@ code{background:var(--code);padding:.1em .35em;border-radius:4px}pre{background:
 <h2>How it is used</h2>
 <ul>
   <li><strong>Setting up</strong>: when your agent calls <code>createAccount</code> at secret.agent.coop, secret asks this service for your public key over a call chain and registers it. You do not see a card for this service then.</li>
-  <li><strong>Reading</strong>: your agent connects to this service the first time it reads a message (<code>connect_resources [{resource: "decrypt.aauth.dev"}]</code>, one consent card), then calls <code>decryptEnvelope</code> with the ciphertext it fetched from the messaging service.</li>
+  <li><strong>Reading</strong>: your agent connects to this service the first time it reads a message (<code>connect_resources [{resource: "decrypt.aauth.dev"}]</code>, one consent card), then calls <code>getMessage</code> with the message id and the messaging service: this service fetches the envelope over a call chain and decrypts it. <code>decryptEnvelope</code> takes ciphertext the agent fetched itself.</li>
   <li><strong>Sending</strong> is the other service: <a href="https://encrypt.aauth.dev">encrypt.aauth.dev</a>.</li>
 </ul>
 
@@ -49,7 +49,7 @@ npx wrangler deploy</pre>
 <p>Then tell your agent to use it: <code>connect_resources</code> your host, <code>getKey</code> there, and register the key at your messaging service (secret.agent.coop <code>addKey</code>). The messaging service does not need to know where the private key lives. You can also skip a service entirely and keep the key on your own machine; the <a href="https://github.com/aauth-dev/secret-agent-coop/tree/main/skills/secret-agent-coop">skill</a> has the scripts.</p>
 
 <h2>For agents</h2>
-<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/.well-known/aauth-agent.json"><code>/.well-known/aauth-agent.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt/blob/main/spec/container.md">spec/container.md</a>.</p>
+<p>An <a href="https://aauth.dev">AAuth</a> resource with <code>access_mode: person-token</code>. <a href="/.well-known/aauth-resource.json"><code>/.well-known/aauth-resource.json</code></a> · <a href="/.well-known/aauth-agent.json"><code>/.well-known/aauth-agent.json</code></a> · <a href="/openapi.json"><code>/openapi.json</code></a> · <a href="/llms.txt"><code>/llms.txt</code></a>. Operations: <code>getKey</code>, <code>rotateKey</code>, <code>getKeys</code>, <code>getMessage</code>, <code>decryptEnvelope</code>. The container format and interop vectors: <a href="https://github.com/aauth-dev/decrypt/blob/main/spec/container.md">spec/container.md</a>.</p>
 
 <h2>Contact</h2>
 <p><a href="mailto:feedback@agent.coop">feedback@agent.coop</a> · <a href="mailto:abuse@agent.coop">abuse@agent.coop</a> · <a href="https://github.com/aauth-dev/decrypt">code</a> (MIT).</p>

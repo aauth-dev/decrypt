@@ -27,6 +27,9 @@
 
   // Secrets (wrangler secret put):
   //   KEK         — 32 random bytes, base64url (npm run generate-kek); wraps private keys
-  //   SIGNING_KEY — Ed25519 private JWK (npm run generate-key); signs resource tokens
-  //                 and, later, this service's agent token (aauth-agent.json)
+  //   SIGNING_KEY — Ed25519 private JWK (npm run generate-key); signs this
+  //                 service's agent token, published at /.well-known/jwks.json
+  //   AGENT_KEY   — Ed25519 private JWK (npm run generate-key); signs the
+  //                 requests getMessage makes as an intermediary; cnf.jwk in
+  //                 the agent token and in the chained person token
 }

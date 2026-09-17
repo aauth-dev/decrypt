@@ -1,6 +1,8 @@
 // AAuth verification: RFC 9421 signature, then the person (or PS-issued
 // auth) token, then the identity (iss, sub). No step-up here: decrypt is
-// person-token mode throughout stage 1.
+// person-token mode throughout stage 1. The presented token is kept on the
+// identity: it is the upstream_token when getMessage chains to the messaging
+// service.
 import type { Context, MiddlewareHandler } from 'hono'
 import {
   verify as httpSigVerify,
@@ -72,10 +74,10 @@ export const requireIdentity: MiddlewareHandler<HonoEnv> = async (c, next) => {
     const verified = await verifyToken({ jwt: sig.jwt.raw, httpSignatureThumbprint: sig.thumbprint, resource: c.env.ORIGIN, accept })
     if (verified.type === 'person') {
       const v = verified as VerifiedPersonToken
-      c.set('identity', { iss: v.iss, sub: v.sub, kind: 'person', thumbprint: sig.thumbprint })
+      c.set('identity', { iss: v.iss, sub: v.sub, kind: 'person', jwt: sig.jwt.raw, thumbprint: sig.thumbprint })
     } else {
       const v = verified as VerifiedAuthToken
-      c.set('identity', { iss: v.ps, sub: v.sub, kind: 'auth', thumbprint: sig.thumbprint })
+      c.set('identity', { iss: v.ps, sub: v.sub, kind: 'auth', jwt: sig.jwt.raw, thumbprint: sig.thumbprint })
     }
   } catch (err) {
     if (err instanceof AAuthTokenError) {

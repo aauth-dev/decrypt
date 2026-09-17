@@ -7,6 +7,7 @@ const TEST_SIGNING_KEY = JSON.stringify({
   x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo',
   alg: 'Ed25519',
 })
+const TEST_AGENT_KEY = JSON.stringify({"crv":"Ed25519","d":"rJY5TCP27fRqKKP61WOyCcivxPN1SRWqsVQ6Z5N4mno","x":"KAi9p0ZVmW2qWSrLpw1FSLvGNW9OR7BmuME3_7UukqY","kty":"OKP","alg":"Ed25519"})
 // Deterministic test KEK (32 zero-ish bytes); the deployed KEK is a secret.
 export const TEST_KEK = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
 
@@ -16,7 +17,7 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
-        miniflare: { bindings: { SIGNING_KEY: TEST_SIGNING_KEY, KEK: TEST_KEK, TEST_MIGRATIONS: migrations } },
+        miniflare: { bindings: { SIGNING_KEY: TEST_SIGNING_KEY, AGENT_KEY: TEST_AGENT_KEY, KEK: TEST_KEK, TEST_MIGRATIONS: migrations } },
       }),
     ],
     test: { include: ['test/**/*.test.ts'], setupFiles: ['./test/apply-migrations.ts'] },

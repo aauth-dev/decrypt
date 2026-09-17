@@ -1,18 +1,18 @@
 // decrypt.aauth.dev — the decrypt Worker (plan A4, A5, D26). Public:
 // well-known (resource and agent), JWKS, OpenAPI, pages. Protected (person
-// token): getKey, rotateKey, getKeys, decryptEnvelope.
+// token): getKey, rotateKey, getKeys, decryptEnvelope, getMessage (the
+// chained download, D1).
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { requireIdentity, parseJsonBody } from './auth'
 import { getPublicJWK } from './crypto'
 import { emit, emitBackground } from './events'
-import { decryptEnvelope, JweError, parseProtectedHeader } from './jwe'
-import { currentKey, listKeys, loadPrivateJwk, mintKey, publicRecord } from './keys'
+import { agentDocument } from './agent-identity'
+import { currentKey, listKeys, mintKey, publicRecord } from './keys'
 import { openapi } from './openapi'
+import { answerDecrypted, getMessage } from './read'
 import type { Env, HonoEnv } from './types'
 import { B64URL_RE, b64urlDecode, identityHash, nowIso } from './util'
-
-const MAX_CIPHERTEXT = 1_048_576
 
 const app = new Hono<HonoEnv>()
 
@@ -38,13 +38,10 @@ app.get('/.well-known/aauth-resource.json', (c) => {
     llms_txt: `${origin}/llms.txt`,
   })
 })
-// D24: decrypt will act as an intermediary toward the messaging service for
-// the chained download. The agent document names it and points at the JWKS
-// the agent token is signed under.
-app.get('/.well-known/aauth-agent.json', (c) => {
-  const origin = c.env.ORIGIN
-  return c.json({ issuer: origin, name: new URL(origin).host, jwks_uri: `${origin}/.well-known/jwks.json` })
-})
+// D1, D24: decrypt is an intermediary toward the messaging service for the
+// chained download (getMessage). A PS verifies the agent token against
+// jwks_uri.
+app.get('/.well-known/aauth-agent.json', (c) => c.json(agentDocument(c.env.ORIGIN)))
 app.get('/.well-known/jwks.json', async (c) => c.json({ keys: [await getPublicJWK(c.env.SIGNING_KEY)] }))
 app.get('/openapi.json', (c) => c.json(openapi(c.env.ORIGIN)))
 app.get('/health', (c) => c.json({ status: 'ok', service: c.env.SERVICE }))
@@ -73,8 +70,6 @@ app.get('/keys', requireIdentity, async (c) => {
 })
 
 app.post('/decrypt', requireIdentity, async (c) => {
-  const id = c.get('identity')
-  const started = Date.now()
   const ct = c.req.header('content-type') ?? ''
   let protectedB64: string | undefined
   let iv: string | undefined
@@ -97,50 +92,11 @@ app.post('/decrypt', requireIdentity, async (c) => {
   for (const [name, v] of [['protected', protectedB64], ['iv', iv], ['tag', tag]] as const) {
     if (!v || !B64URL_RE.test(v)) return c.json({ error: 'invalid_request', field: name, detail: 'base64url string required' }, 400)
   }
-  if (!ciphertext || ciphertext.byteLength === 0) return c.json({ error: 'invalid_request', field: 'ciphertext', detail: 'empty' }, 400)
-  if (ciphertext.byteLength > MAX_CIPHERTEXT) return c.json({ error: 'payload_too_large', detail: `ciphertext is limited to ${MAX_CIPHERTEXT} bytes` }, 413)
-
-  let header
-  try {
-    header = parseProtectedHeader(protectedB64!)
-  } catch (err) {
-    if (err instanceof JweError) {
-      emit(c, { event: 'decrypt_refused', level: 40, code: err.code })
-      return c.json({ error: err.code, detail: err.message }, 400)
-    }
-    throw err
-  }
-  const key = await loadPrivateJwk(c.env, id.iss, id.sub, header.kid)
-  if (!key) {
-    emit(c, { event: 'decrypt_refused', level: 40, code: 'unknown_kid', identity: await identityHash(id.iss, id.sub) })
-    return c.json({ error: 'unknown_kid', detail: 'no key of yours matches the kid in the protected header' }, 404)
-  }
-  try {
-    const { plaintext } = await decryptEnvelope(key.jwk, { protected: protectedB64!, iv: iv!, tag: tag!, ciphertext })
-    const text = new TextDecoder().decode(plaintext)
-    let obj: unknown = null
-    try {
-      obj = JSON.parse(text)
-    } catch {
-      obj = null
-    }
-    emit(c, {
-      event: 'message_decrypted', identity: await identityHash(id.iss, id.sub), kid: header.kid, size: ciphertext.byteLength, ms: Date.now() - started, fetched_by: 'agent',
-    })
-    const warnings: string[] = []
-    return c.json(
-      obj && typeof obj === 'object' && !Array.isArray(obj)
-        ? { kid: header.kid, size: ciphertext.byteLength, plaintext: obj, warnings }
-        : { kid: header.kid, size: ciphertext.byteLength, text, warnings },
-    )
-  } catch (err) {
-    if (err instanceof JweError) {
-      emit(c, { event: 'decrypt_refused', level: 40, code: err.code, kid: header.kid })
-      return c.json({ error: err.code, detail: err.message }, 400)
-    }
-    throw err
-  }
+  if (!ciphertext) return c.json({ error: 'invalid_request', field: 'ciphertext', detail: 'empty' }, 400)
+  return answerDecrypted(c, { protected: protectedB64!, iv: iv!, tag: tag!, ciphertext }, 'agent')
 })
+
+app.get('/messages/:id', requireIdentity, getMessage)
 
 // The page paths listed in run_worker_first reach the Worker on every host;
 // on the live host they are served from the assets binding here.
