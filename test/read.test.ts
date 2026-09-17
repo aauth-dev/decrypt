@@ -60,6 +60,8 @@ describe('readMessage (7b)', () => {
     expect(secret.seen.at(-1)).toBe(await ps.sub(BOB, SECRET))
     expect(secret.agentIds.at(-1)).toBe('aauth:read@decrypt.aauth.dev')
     expect(decodeJwt(ps.lastAgentToken!).sub).toBe('aauth:read@decrypt.aauth.dev')
+    // Required by Hellō since Wallet 2026.9.24 (#4302): 401 without one.
+    expect(decodeJwt(ps.lastAgentToken!).jti).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
   })
 
   it('resource is optional: the default is DEFAULT_RESOURCE (Q7)', async () => {
