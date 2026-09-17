@@ -9,9 +9,10 @@
 // interaction. Its documents are served through a mocked global fetch.
 //
 // Also here: a fake messaging service at SECRET (deliberately not an
-// agent.coop host: the Worker under test must take the target as a
-// parameter) with /keys, /messages, /messages/{id}/blob, verifying the
-// signature and the chained person token and recording what arrived.
+// agent.coop host: the Worker under test must take the target from the
+// request or from DEFAULT_RESOURCE) with downloadMessage and setPublicKey,
+// verifying the signature and the chained person token and recording what
+// arrived.
 //
 // Also here: an Agent that plays the AAuth MCP against the Worker under
 // test — signs requests with RFC 9421 (jwt scheme) and follows
@@ -212,8 +213,10 @@ export class FakePS {
     const person = typeof upstream.sub === 'string' ? this.subs.get(upstream.sub) : undefined
     if (!person) return problem(400, 'invalid_upstream_token', 'unknown sub')
 
+    // Hellō puts the agent the token is issued to on person tokens for the
+    // messaging service (Wallet passthrough-claims.js): here, the intermediary.
     const personToken = await this.sign('aa-person+jwt', {
-      iss: this.iss, dwk: 'aauth-person.json', aud: params.resource, sub: await this.sub(person, params.resource), cnf: { jwk: cnf },
+      iss: this.iss, dwk: 'aauth-person.json', aud: params.resource, sub: await this.sub(person, params.resource), cnf: { jwk: cnf }, agent_id: agent.sub,
     }, 600)
     return Response.json({ person_token: personToken, expires_in: 600 })
   }
@@ -284,71 +287,52 @@ export interface Person {
 }
 
 // ── The fake messaging service ──
-// What decrypt chains to. Verifies the signature and the chained person
-// token (issued by the fake PS, aud SECRET, cnf = the signing key), then
-// behaves like secret.agent.coop's getKeys, sendMessage, putBlob, and
-// getMessage for a small in-memory world: `recipients` with a key,
-// `connected` addresses, `inbox` messages waiting per recipient sub.
+// What this service chains to. Verifies the signature and the chained
+// person token (issued by the fake PS, aud SECRET, cnf = the signing key),
+// then behaves like secret.agent.coop's downloadMessage and setPublicKey
+// (plan read-send-services sections 4c, 5c): `inbox` messages waiting per
+// recipient sub, `publicKeys` the latest key per sub, `readServiceHost` the
+// host setPublicKey accepts.
 
-export interface RecipientKey {
-  kid: string
-  alg: 'ECDH-ES'
-  jwk: JsonWebKey
-  privateJwk: JsonWebKey
-}
-export interface ReceivedMessage {
+export interface InboxMessage {
   id: string
-  to: string
-  from?: string
-  protected: string
-  iv: string
-  tag: string
-  size: number
-  kid: string
-  idempotency_key?: string
-  blob?: Uint8Array
-  blobContentType?: string
-  /** the sub the chained person token carried */
+  /** the recipient's sub at SECRET */
   sub: string
+  from: string
+  from_name?: string
+  to: string
+  jwe?: string
+  system?: Record<string, unknown>
+  state: 'new' | 'downloaded'
 }
 
 export class FakeSecret {
   readonly origin = SECRET
-  recipients = new Map<string, RecipientKey>()
-  connected = new Set<string>()
-  received: ReceivedMessage[] = []
   /** "METHOD path" of every authenticated request, in order */
   requests: string[] = []
-  /** subs seen on chained person tokens */
+  /** subs and agent_ids seen on chained person tokens */
   seen: string[] = []
-  /** messages waiting for download, by id; `sub` is the recipient's sub at SECRET */
+  agentIds: unknown[] = []
+  /** messages waiting for download, by id */
   inbox = new Map<string, InboxMessage>()
   /** Accept header of each GET /messages/{id} */
   downloadAccepts: string[] = []
-  /** the next POST /messages answers with this */
-  failNextSend?: { status: number; error: string; detail?: string }
-  private counter = 0
+  /** the latest public key per sub, as setPublicKey stored it */
+  publicKeys = new Map<string, { kid: string; alg: string; jwk: JsonWebKey }>()
+  /** every setPublicKey body that arrived, accepted or not */
+  setPublicKeyCalls: Array<Record<string, unknown>> = []
+  /** setPublicKey accepts only an agent_id on this host: the person's read service */
+  readServiceHost = new URL(RESOURCE).host
+  /** the next setPublicKey answers with this */
+  failNextSetPublicKey?: { status: number; error: string; detail?: string }
 
   constructor(readonly ps: FakePS) {
     installMockFetch()
-    routes.set(`${SECRET}/keys`, (req) => this.getKeys(req))
-    routes.set(`${SECRET}/messages`, (req) => this.postMessage(req))
-    prefixRoutes.set(`${SECRET}/messages/`, (req) => (req.method === 'GET' ? this.getMessage(req) : this.putBlob(req)))
+    routes.set(`${SECRET}/public-key`, (req) => this.setPublicKey(req))
+    prefixRoutes.set(`${SECRET}/messages/`, (req) => this.downloadMessage(req))
   }
 
-  /** A connected person with a registered key. Returns the key so tests can decrypt. */
-  async addRecipient(address: string): Promise<RecipientKey> {
-    const pair = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair
-    const priv = (await crypto.subtle.exportKey('jwk', pair.privateKey)) as JsonWebKey
-    const jwk: JsonWebKey = { kty: 'EC', crv: 'P-256', x: priv.x, y: priv.y }
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y })))
-    const key: RecipientKey = { kid: b64url(new Uint8Array(digest)), alg: 'ECDH-ES', jwk, privateJwk: { ...jwk, d: priv.d } }
-    this.recipients.set(address, key)
-    this.connected.add(address)
-    return key
-  }
-
-  private async auth(req: Request): Promise<{ sub: string; body?: Uint8Array } | Response> {
+  private async auth(req: Request): Promise<{ sub: string; agent_id: unknown; body?: Uint8Array } | Response> {
     const { sig, body } = await verifySigned(req)
     if (!sig.verified) return problem(401, 'signature_verification_failed', sig.error ?? 'bad signature')
     if (sig.keyType !== 'jwt' || !sig.jwt) return problem(401, 'person_token_required', 'sig=jwt required')
@@ -363,57 +347,12 @@ export class FakeSecret {
     const url = new URL(req.url)
     this.requests.push(`${req.method} ${url.pathname}`)
     this.seen.push(String(claims.sub))
-    return { sub: String(claims.sub), body }
+    this.agentIds.push(claims.agent_id)
+    return { sub: String(claims.sub), agent_id: claims.agent_id, body }
   }
 
-  private async getKeys(req: Request): Promise<Response> {
-    const a = await this.auth(req)
-    if (a instanceof Response) return a
-    const address = new URL(req.url).searchParams.get('address') ?? ''
-    if (!this.connected.has(address)) return Response.json({ error: 'not_connected', detail: 'no connection with that address' }, { status: 404 })
-    const key = this.recipients.get(address)
-    if (!key) return Response.json({ error: 'recipient_has_no_key', detail: 'the recipient has not registered a public key yet' }, { status: 409 })
-    return Response.json({ address, keys: [{ kid: key.kid, alg: key.alg, jwk: key.jwk, created_at: new Date().toISOString() }] })
-  }
-
-  private async postMessage(req: Request): Promise<Response> {
-    const a = await this.auth(req)
-    if (a instanceof Response) return a
-    if (!(req.headers.get('content-type') ?? '').startsWith('application/json')) return problem(400, 'invalid_json', 'application/json required')
-    if (this.failNextSend) {
-      const f = this.failNextSend
-      this.failNextSend = undefined
-      return Response.json({ error: f.error, detail: f.detail ?? f.error }, { status: f.status })
-    }
-    const m = JSON.parse(new TextDecoder().decode(a.body)) as Record<string, unknown>
-    if (typeof m.idempotency_key === 'string') {
-      const prior = this.received.find((r) => r.idempotency_key === m.idempotency_key && r.sub === a.sub)
-      if (prior) return Response.json({ id: prior.id, to: prior.to, from: prior.from, size: prior.size, kid: prior.kid, replayed: true, ...(prior.blob ? { blob_at: new Date().toISOString() } : {}) })
-    }
-    const to = String(m.to)
-    if (!this.connected.has(to)) return Response.json({ error: 'not_connected' }, { status: 404 })
-    const key = this.recipients.get(to)
-    if (!key) return Response.json({ error: 'recipient_has_no_key' }, { status: 409 })
-    for (const [f, len] of [['iv', 12], ['tag', 16]] as const) {
-      const v = m[f]
-      if (typeof v !== 'string' || b64urlDecode(v).length !== len) return Response.json({ error: 'invalid_envelope', field: f }, { status: 400 })
-    }
-    if (typeof m.protected !== 'string') return Response.json({ error: 'invalid_envelope', field: 'protected' }, { status: 400 })
-    const header = JSON.parse(new TextDecoder().decode(b64urlDecode(m.protected))) as Record<string, unknown>
-    if (header.alg !== 'ECDH-ES' || header.enc !== 'A256GCM') return Response.json({ error: 'invalid_envelope', field: 'protected', detail: 'alg/enc' }, { status: 400 })
-    if (header.kid !== key.kid) return Response.json({ error: 'unknown_kid', keys: [key.kid] }, { status: 409 })
-    const epk = header.epk as Record<string, unknown> | undefined
-    if (!epk || epk.kty !== 'EC' || epk.crv !== 'P-256') return Response.json({ error: 'invalid_envelope', field: 'protected', detail: 'epk' }, { status: 400 })
-    const size = m.size
-    if (typeof size !== 'number' || !Number.isInteger(size) || size < 1 || size > 1_048_576) return Response.json({ error: 'invalid_request', field: 'size' }, { status: 400 })
-    const id = `msg_fake${String(++this.counter).padStart(20, '0')}_000`
-    const rec: ReceivedMessage = { id, to, from: typeof m.from === 'string' ? m.from : undefined, protected: m.protected, iv: m.iv as string, tag: m.tag as string, size, kid: key.kid, idempotency_key: typeof m.idempotency_key === 'string' ? m.idempotency_key : undefined, sub: a.sub }
-    this.received.push(rec)
-    return Response.json({ id, to, from: rec.from ?? 'mailto:sender@fake.test', size, kid: key.kid, state: 'new', upload_until: new Date(Date.now() + 600_000).toISOString() }, { status: 201 })
-  }
-
-  /** secret's getMessage: JSON with the base64url blob when asked, else raw bytes with x-jwe-* headers. */
-  private async getMessage(req: Request): Promise<Response> {
+  /** secret's downloadMessage: JSON with the compact JWE; 406 use_read_service without Accept: application/json. */
+  private async downloadMessage(req: Request): Promise<Response> {
     const a = await this.auth(req)
     if (a instanceof Response) return a
     const id = decodeURIComponent(new URL(req.url).pathname.slice('/messages/'.length))
@@ -421,41 +360,40 @@ export class FakeSecret {
     if (!m || m.sub !== a.sub) return Response.json({ error: 'not_found' }, { status: 404 })
     const accept = req.headers.get('accept') ?? ''
     this.downloadAccepts.push(accept)
-    m.state = 'downloaded'
-    if (accept.includes('application/json')) {
-      return Response.json({ id: m.id, from: m.from, to: m.to, kid: m.kid, protected: m.protected, iv: m.iv, tag: m.tag, size: m.blob.byteLength, blob: b64url(m.blob) })
+    const base = { id: m.id, from: m.from, ...(m.from_name ? { from_name: m.from_name } : {}), to: m.to }
+    if (m.system) {
+      m.state = 'downloaded'
+      return Response.json({ ...base, created_at: '2026-09-17T00:00:00.000Z', system: m.system })
     }
-    return new Response(m.blob as BodyInit, { headers: { 'content-type': 'application/octet-stream', 'x-jwe-protected': m.protected, 'x-jwe-iv': m.iv, 'x-jwe-tag': m.tag } })
+    if (!accept.includes('application/json')) return Response.json({ error: 'use_read_service', read_message_with: { resource: RESOURCE, op_id: 'readMessage' } }, { status: 406 })
+    m.state = 'downloaded'
+    let kid: unknown
+    try {
+      kid = (JSON.parse(new TextDecoder().decode(b64urlDecode(m.jwe!.split('.')[0]))) as { kid?: unknown }).kid
+    } catch {
+      kid = undefined
+    }
+    return Response.json({ ...base, kid, size: m.jwe!.length, created_at: '2026-09-17T00:00:00.000Z', jwe: m.jwe })
   }
 
-  private async putBlob(req: Request): Promise<Response> {
+  /** secret's setPublicKey: only from the person's read service. */
+  private async setPublicKey(req: Request): Promise<Response> {
     const a = await this.auth(req)
     if (a instanceof Response) return a
-    const m = /\/messages\/([^/]+)\/blob$/.exec(new URL(req.url).pathname)
-    const rec = m && this.received.find((r) => r.id === decodeURIComponent(m[1]))
-    if (!rec) return Response.json({ error: 'not_found' }, { status: 404 })
-    if (rec.blob) return Response.json({ error: 'blob_exists' }, { status: 409 })
-    const ct = req.headers.get('content-type') ?? ''
-    if (!ct.startsWith('application/octet-stream')) return Response.json({ error: 'invalid_request', detail: `expected the canonical octet-stream body, got ${ct}` }, { status: 400 })
-    const bytes = a.body ?? new Uint8Array()
-    if (bytes.byteLength !== rec.size) return Response.json({ error: 'size_mismatch', detail: `declared ${rec.size} bytes, received ${bytes.byteLength}` }, { status: 409 })
-    rec.blob = bytes
-    rec.blobContentType = ct
-    return Response.json({ id: rec.id, to: rec.to, size: rec.size, blob_at: new Date().toISOString() })
+    if (req.method !== 'PUT') return problem(405, 'method_not_allowed', 'PUT only')
+    const body = JSON.parse(new TextDecoder().decode(a.body)) as Record<string, unknown>
+    this.setPublicKeyCalls.push(body)
+    if (this.failNextSetPublicKey) {
+      const f = this.failNextSetPublicKey
+      this.failNextSetPublicKey = undefined
+      return Response.json({ error: f.error, detail: f.detail ?? f.error }, { status: f.status })
+    }
+    const host = typeof a.agent_id === 'string' ? a.agent_id.slice(a.agent_id.lastIndexOf('@') + 1) : null
+    if (host !== this.readServiceHost) return Response.json({ error: 'not_read_service', detail: 'agent_id is not the person\'s read service' }, { status: 403 })
+    if (typeof body.kid !== 'string' || body.alg !== 'ECDH-ES' || !body.jwk) return Response.json({ error: 'invalid_key' }, { status: 400 })
+    this.publicKeys.set(a.sub, { kid: body.kid, alg: 'ECDH-ES', jwk: body.jwk as JsonWebKey })
+    return Response.json({ kid: body.kid, created_at: new Date().toISOString() })
   }
-}
-
-export interface InboxMessage {
-  id: string
-  sub: string
-  from: string
-  to: string
-  kid: string
-  protected: string
-  iv: string
-  tag: string
-  blob: Uint8Array
-  state: 'new' | 'downloaded'
 }
 
 function b64urlDecode(str: string): Uint8Array {
@@ -481,7 +419,17 @@ export class Agent {
   key!: TestKey
   lastAuthToken?: string
 
-  constructor(readonly ps: FakePS, readonly person: Person, readonly resource = RESOURCE) {}
+  /**
+   * `agentId` is what the Person Server says about the agent on the person
+   * token (agent_id): the AAuth MCP by default; the messaging service's own
+   * agent id when it chains here for rotatePublicKey (5b); null for a PS
+   * that says nothing.
+   */
+  constructor(readonly ps: FakePS, readonly person: Person, readonly resource = RESOURCE, readonly agentId: string | null = 'aauth:agent@mcp.fake.test') {}
+
+  private personToken(): Promise<string> {
+    return this.ps.personToken(this.person, this.key, this.resource, this.agentId ? { agent_id: this.agentId } : {})
+  }
 
   async init(): Promise<this> {
     this.key = await generateEd25519()
@@ -515,7 +463,7 @@ export class Agent {
   /** One call with the requirement loop: person token → (auth-token challenge → exchange → retry). */
   async call(method: string, path: string, opts: CallOptions = {}): Promise<Response> {
     const url = `${this.resource}${path}`
-    let jwt = opts.cred?.kind === 'auth' ? opts.cred.jwt : await this.ps.personToken(this.person, this.key, this.resource)
+    let jwt = opts.cred?.kind === 'auth' ? opts.cred.jwt : await this.personToken()
     for (let round = 0; round < 3; round++) {
       const res = await this.signed(jwt, method, url, opts)
       const header = res.headers.get('aauth-requirement')
@@ -529,7 +477,7 @@ export class Agent {
         continue
       }
       if (req.requirement === 'person-token') {
-        jwt = await this.ps.personToken(this.person, this.key, this.resource)
+        jwt = await this.personToken()
         continue
       }
       return res

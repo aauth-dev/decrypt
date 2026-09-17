@@ -1,8 +1,9 @@
 // AAuth verification: RFC 9421 signature, then the person (or PS-issued
 // auth) token, then the identity (iss, sub). No step-up here: decrypt is
-// person-token mode throughout stage 1. The presented token is kept on the
-// identity: it is the upstream_token when getMessage chains to the messaging
-// service.
+// person-token mode throughout. The presented token is kept on the
+// identity: it is the upstream_token when readMessage or rotateKey chains to
+// the messaging service. So is its agent_id, when the Person Server sends
+// one: rotateKey uses it to see that the messaging service is the caller.
 import type { Context, MiddlewareHandler } from 'hono'
 import {
   verify as httpSigVerify,
@@ -15,13 +16,24 @@ import { AAuthTokenError, TOKEN_TYP, buildAAuthHeader, verifyToken, type Verifie
 import { emitVerifyFailed } from './events'
 import type { HonoEnv } from './types'
 
-const MAX_BODY = 1_500_000
+const MAX_BODY = 65_536 // request bodies here are {id, resource}
 
 const personTokenHeaders = () => ({
   'AAuth-Requirement': buildAAuthHeader('person-token'),
   'Accept-Signature': generateAcceptSignatureHeader({ label: 'sig', components: ['@method', '@authority', '@path', 'signature-key'] }),
   'Accept-Signature-Scheme': generateAcceptSignatureSchemeHeader(['jwt']),
 })
+
+const AGENT_ID_RE = /^aauth:[A-Za-z0-9\-_+.]+@[^@\s]+$/
+const agentId = (claims: Record<string, unknown>): { agent_id?: string } =>
+  typeof claims.agent_id === 'string' && claims.agent_id.length <= 320 && AGENT_ID_RE.test(claims.agent_id) ? { agent_id: claims.agent_id } : {}
+
+/** The host of an agent id, `aauth:local@host`, lowercased. */
+export function agentHost(id: string | undefined): string | null {
+  if (!id) return null
+  const at = id.lastIndexOf('@')
+  return at < 0 ? null : id.slice(at + 1).toLowerCase()
+}
 
 async function readBody(c: Context<HonoEnv>): Promise<Uint8Array | undefined | 'too_large'> {
   const req = c.req.raw
@@ -74,10 +86,10 @@ export const requireIdentity: MiddlewareHandler<HonoEnv> = async (c, next) => {
     const verified = await verifyToken({ jwt: sig.jwt.raw, httpSignatureThumbprint: sig.thumbprint, resource: c.env.ORIGIN, accept })
     if (verified.type === 'person') {
       const v = verified as VerifiedPersonToken
-      c.set('identity', { iss: v.iss, sub: v.sub, kind: 'person', jwt: sig.jwt.raw, thumbprint: sig.thumbprint })
+      c.set('identity', { iss: v.iss, sub: v.sub, kind: 'person', jwt: sig.jwt.raw, thumbprint: sig.thumbprint, ...agentId(v.claims) })
     } else {
       const v = verified as VerifiedAuthToken
-      c.set('identity', { iss: v.ps, sub: v.sub, kind: 'auth', jwt: sig.jwt.raw, thumbprint: sig.thumbprint })
+      c.set('identity', { iss: v.ps, sub: v.sub, kind: 'auth', jwt: sig.jwt.raw, thumbprint: sig.thumbprint, ...agentId(v.claims) })
     }
   } catch (err) {
     if (err instanceof AAuthTokenError) {

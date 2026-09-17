@@ -35,13 +35,13 @@ export async function mintKey(env: Env, iss: string, sub: string): Promise<KeyRo
 }
 
 export async function currentKey(env: Env, iss: string, sub: string): Promise<KeyRow | null> {
-  return env.DB.prepare('SELECT * FROM private_keys WHERE ps_iss = ? AND ps_sub = ? AND retired_at IS NULL ORDER BY created_at DESC LIMIT 1')
+  return env.DB.prepare('SELECT * FROM private_keys WHERE ps_iss = ? AND ps_sub = ? AND retired_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1')
     .bind(iss, sub)
     .first<KeyRow>()
 }
 
 export async function listKeys(env: Env, iss: string, sub: string): Promise<KeyRow[]> {
-  const r = await env.DB.prepare('SELECT * FROM private_keys WHERE ps_iss = ? AND ps_sub = ? ORDER BY created_at DESC').bind(iss, sub).all<KeyRow>()
+  const r = await env.DB.prepare('SELECT * FROM private_keys WHERE ps_iss = ? AND ps_sub = ? ORDER BY created_at DESC, rowid DESC').bind(iss, sub).all<KeyRow>()
   return r.results
 }
 

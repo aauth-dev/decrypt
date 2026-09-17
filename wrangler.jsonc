@@ -15,7 +15,10 @@
 
   "vars": {
     "SERVICE": "decrypt",
-    "ORIGIN": "https://decrypt.aauth.dev"
+    "ORIGIN": "https://decrypt.aauth.dev",
+    // The messaging service readMessage downloads from and rotateKey reports
+    // to when the caller gives no `resource` (D27, Q7). The only place it is named.
+    "DEFAULT_RESOURCE": "https://secret.agent.coop"
   },
 
   "d1_databases": [
@@ -30,6 +33,6 @@
   //   SIGNING_KEY — Ed25519 private JWK (npm run generate-key); signs this
   //                 service's agent token, published at /.well-known/jwks.json
   //   AGENT_KEY   — Ed25519 private JWK (npm run generate-key); signs the
-  //                 requests getMessage makes as an intermediary; cnf.jwk in
+  //                 requests readMessage and rotateKey make as an intermediary; cnf.jwk in
   //                 the agent token and in the chained person token
 }

@@ -17,7 +17,8 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
-        miniflare: { bindings: { SIGNING_KEY: TEST_SIGNING_KEY, AGENT_KEY: TEST_AGENT_KEY, KEK: TEST_KEK, TEST_MIGRATIONS: migrations } },
+        // DEFAULT_RESOURCE is the fake messaging service, not a production host: the default comes from config.
+        miniflare: { bindings: { SIGNING_KEY: TEST_SIGNING_KEY, AGENT_KEY: TEST_AGENT_KEY, KEK: TEST_KEK, DEFAULT_RESOURCE: 'https://secret.fake.test', TEST_MIGRATIONS: migrations } },
       }),
     ],
     test: { include: ['test/**/*.test.ts'], setupFiles: ['./test/apply-migrations.ts'] },

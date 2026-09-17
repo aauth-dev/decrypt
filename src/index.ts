@@ -1,18 +1,19 @@
-// decrypt.aauth.dev — the decrypt Worker (plan A4, A5, D26). Public:
+// The read service Worker (plan A4, A5, D26; D27 section 7). Public:
 // well-known (resource and agent), JWKS, OpenAPI, pages. Protected (person
-// token): getKey, rotateKey, getKeys, decryptEnvelope, getMessage (the
-// chained download, D1).
+// token): readMessage (the chained download and decrypt), getKey, rotateKey,
+// getKeys. Host names come from env.
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { requireIdentity, parseJsonBody } from './auth'
+import { requireIdentity } from './auth'
 import { getPublicJWK } from './crypto'
 import { emit, emitBackground } from './events'
 import { agentDocument } from './agent-identity'
 import { currentKey, listKeys, mintKey, publicRecord } from './keys'
+import { rotateKey } from './rotate'
 import { openapi } from './openapi'
-import { answerDecrypted, getMessage } from './read'
+import { readMessage } from './read'
 import type { Env, HonoEnv } from './types'
-import { B64URL_RE, b64urlDecode, identityHash, nowIso } from './util'
+import { identityHash, nowIso } from './util'
 
 const app = new Hono<HonoEnv>()
 
@@ -30,20 +31,19 @@ app.get('/.well-known/aauth-resource.json', (c) => {
   return c.json({
     issuer: origin,
     jwks_uri: `${origin}/.well-known/jwks.json`,
-    name: 'decrypt.aauth.dev',
-    description: 'Holds the private key that decrypts your end-to-end encrypted messages and decrypts them for your agent. The default decrypt service for secret.agent.coop; the code is open and you can run your own.',
+    name: new URL(origin).host,
+    description: 'A read service: holds the private keys that decrypt your end-to-end encrypted messages, and reads a message for your agent by downloading it from your messaging service and decrypting it. The code is open and you can run your own.',
     access_mode: 'person-token',
     r3_vocabularies: { 'urn:aauth:vocabulary:openapi': `${origin}/openapi.json` },
     contact: { feedback: 'feedback@agent.coop', abuse: 'abuse@agent.coop' },
     llms_txt: `${origin}/llms.txt`,
   })
 })
-// D1, D24: decrypt is an intermediary toward the messaging service for the
-// chained download (getMessage). A PS verifies the agent token against
-// jwks_uri.
+// This service is an intermediary toward the messaging service (readMessage,
+// rotateKey). A PS verifies the agent token against jwks_uri.
 app.get('/.well-known/aauth-agent.json', (c) => c.json(agentDocument(c.env.ORIGIN)))
 app.get('/.well-known/jwks.json', async (c) => c.json({ keys: [await getPublicJWK(c.env.SIGNING_KEY)] }))
-app.get('/openapi.json', (c) => c.json(openapi(c.env.ORIGIN)))
+app.get('/openapi.json', (c) => c.json(openapi(c.env)))
 app.get('/health', (c) => c.json({ status: 'ok', service: c.env.SERVICE }))
 
 app.get('/key', requireIdentity, async (c) => {
@@ -56,12 +56,7 @@ app.get('/key', requireIdentity, async (c) => {
   return c.json(publicRecord(row))
 })
 
-app.post('/key', requireIdentity, async (c) => {
-  const id = c.get('identity')
-  const row = await mintKey(c.env, id.iss, id.sub)
-  emit(c, { event: 'key_rotated', identity: await identityHash(id.iss, id.sub), kid: row.kid })
-  return c.json(publicRecord(row))
-})
+app.post('/key', requireIdentity, rotateKey)
 
 app.get('/keys', requireIdentity, async (c) => {
   const id = c.get('identity')
@@ -69,34 +64,7 @@ app.get('/keys', requireIdentity, async (c) => {
   return c.json({ keys: rows.map(publicRecord) })
 })
 
-app.post('/decrypt', requireIdentity, async (c) => {
-  const ct = c.req.header('content-type') ?? ''
-  let protectedB64: string | undefined
-  let iv: string | undefined
-  let tag: string | undefined
-  let ciphertext: Uint8Array | undefined
-  if (ct.startsWith('application/json')) {
-    const body = parseJsonBody<{ protected?: unknown; iv?: unknown; tag?: unknown; ciphertext?: unknown }>(c)
-    if (!body) return c.json({ error: 'invalid_json' }, 400)
-    protectedB64 = typeof body.protected === 'string' ? body.protected : undefined
-    iv = typeof body.iv === 'string' ? body.iv : undefined
-    tag = typeof body.tag === 'string' ? body.tag : undefined
-    if (typeof body.ciphertext !== 'string' || !B64URL_RE.test(body.ciphertext)) return c.json({ error: 'invalid_request', field: 'ciphertext', detail: 'base64url string required' }, 400)
-    ciphertext = b64urlDecode(body.ciphertext)
-  } else {
-    protectedB64 = c.req.query('protected') ?? c.req.header('x-jwe-protected') ?? undefined
-    iv = c.req.query('iv') ?? c.req.header('x-jwe-iv') ?? undefined
-    tag = c.req.query('tag') ?? c.req.header('x-jwe-tag') ?? undefined
-    ciphertext = c.get('rawBody')
-  }
-  for (const [name, v] of [['protected', protectedB64], ['iv', iv], ['tag', tag]] as const) {
-    if (!v || !B64URL_RE.test(v)) return c.json({ error: 'invalid_request', field: name, detail: 'base64url string required' }, 400)
-  }
-  if (!ciphertext) return c.json({ error: 'invalid_request', field: 'ciphertext', detail: 'empty' }, 400)
-  return answerDecrypted(c, { protected: protectedB64!, iv: iv!, tag: tag!, ciphertext }, 'agent')
-})
-
-app.get('/messages/:id', requireIdentity, getMessage)
+app.post('/read', requireIdentity, readMessage)
 
 // The page paths listed in run_worker_first reach the Worker on every host;
 // on the live host they are served from the assets binding here.
