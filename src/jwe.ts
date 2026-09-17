@@ -1,8 +1,8 @@
-// JWE ECDH-ES + A256GCM on P-256, disassembled (plan D18, D19), on Web
-// Crypto directly: ECDH → Concat KDF (RFC 7518 §4.6.2) → AES-256-GCM with
+// JWE ECDH-ES + A256GCM on P-256, compact serialization (plan D19, D27;
+// spec/container.md), on Web Crypto directly: ECDH → Concat KDF (RFC 7518 §4.6.2) → AES-256-GCM with
 // the base64url protected header as AAD. No library, so decrypting the
 // jose and jwcrypto vectors is a cross-implementation check.
-import { b64urlDecode } from './util'
+import { B64URL_RE, b64urlDecode } from './util'
 
 export interface Envelope {
   /** base64url protected header, verbatim (it is the AAD) */
@@ -88,7 +88,28 @@ export async function importPublicKey(jwk: JsonWebKey): Promise<CryptoKey> {
   return crypto.subtle.importKey('jwk', k, { name: 'ECDH', namedCurve: 'P-256' }, false, [])
 }
 
-/** Decrypt a disassembled JWE with the recipient's private key. */
+/**
+ * Split a compact JWE (RFC 7516 §7.1) into its parts. Five parts, the
+ * encrypted key empty (ECDH-ES direct key agreement), the rest base64url.
+ */
+export function parseCompact(jwe: unknown): Envelope {
+  if (typeof jwe !== 'string') throw new JweError('invalid_jwe', 'jwe must be a compact JWE string')
+  const parts = jwe.split('.')
+  if (parts.length !== 5) throw new JweError('invalid_jwe', 'a compact JWE has five parts')
+  const [protectedB64, encryptedKey, iv, ciphertext, tag] = parts
+  if (encryptedKey !== '') throw new JweError('invalid_jwe', 'the encrypted key part must be empty for ECDH-ES')
+  for (const [name, v] of [['protected', protectedB64], ['iv', iv], ['ciphertext', ciphertext], ['tag', tag]] as const) {
+    if (!B64URL_RE.test(v)) throw new JweError('invalid_jwe', `${name} is not base64url`)
+  }
+  return { protected: protectedB64, iv, tag, ciphertext: b64urlDecode(ciphertext) }
+}
+
+/** Decrypt a compact JWE with the recipient's private key. */
+export async function decryptCompact(privateJwk: JsonWebKey, jwe: string): Promise<{ plaintext: Uint8Array; header: ProtectedHeader }> {
+  return decryptEnvelope(privateJwk, parseCompact(jwe))
+}
+
+/** Decrypt the parts of a JWE with the recipient's private key. */
 export async function decryptEnvelope(privateJwk: JsonWebKey, env: Envelope): Promise<{ plaintext: Uint8Array; header: ProtectedHeader }> {
   const header = parseProtectedHeader(env.protected)
   const iv = b64urlDecode(env.iv)

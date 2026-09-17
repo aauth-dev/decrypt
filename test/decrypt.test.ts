@@ -1,15 +1,11 @@
 // decrypt.aauth.dev: keys per directed identity, decryptEnvelope in both
-// body forms, refusals (tampered, wrong kid, other person), interop vectors
-// from jose and jwcrypto decrypted by the Web Crypto implementation, and
-// the 1 MiB timing check.
+// body forms, refusals (tampered, wrong kid, other person), and the 1 MiB
+// timing check. The interop vectors are in jwe.test.ts.
 import { beforeAll, describe, expect, it } from 'vitest'
 import { SELF, env } from 'cloudflare:test'
 import { clearMetadataCache } from '@aauth/resource'
 import { CompactEncrypt, importJWK } from 'jose'
 import { Agent, FakePS, RESOURCE } from './fake-ps'
-import { wrapPrivateJwk } from '../src/kek'
-import joseVector from '../spec/vectors/jose.json'
-import jwcryptoVector from '../spec/vectors/jwcrypto.json'
 
 let ps: FakePS
 let alice: Agent
@@ -158,26 +154,6 @@ describe('decryptEnvelope', () => {
     expect(status).toBe(400)
     expect(body.error).toBe('unsupported_alg')
   })
-})
-
-describe('interop vectors (spec/vectors)', () => {
-  // Load each vector's private key under Alice's identity, then decrypt.
-  for (const vector of [joseVector, jwcryptoVector]) {
-    it(`decrypts the ${vector.generator} vector`, async () => {
-      const iss = ps.iss
-      const sub = await ps.sub({ handle: 'alice', email: 'alice@example.com' }, RESOURCE)
-      const wrapped = await wrapPrivateJwk(env.KEK, iss, sub, vector.kid, vector.private_jwk as JsonWebKey)
-      await env.DB.prepare('INSERT OR REPLACE INTO private_keys (ps_iss, ps_sub, kid, alg, private_jwk, public_jwk, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .bind(iss, sub, vector.kid, 'ECDH-ES', wrapped, JSON.stringify(vector.public_jwk), new Date().toISOString())
-        .run()
-      const { status, body } = await alice.json<{ plaintext: unknown; kid: string }>('POST', '/decrypt', {
-        body: { protected: vector.protected, iv: vector.iv, tag: vector.tag, ciphertext: vector.ciphertext },
-      })
-      expect(status).toBe(200)
-      expect(body.kid).toBe(vector.kid)
-      expect(body.plaintext).toEqual(JSON.parse(vector.plaintext))
-    })
-  }
 })
 
 describe('timing', () => {
