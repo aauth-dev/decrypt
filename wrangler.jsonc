@@ -28,6 +28,10 @@
   // Daily: purge retired keys past purge_after.
   "triggers": { "crons": ["23 3 * * *"] },
 
+  // Events → Freezer through the shared aauth-events queue, consumed by
+  // shipper.aauth.dev (plan item T). Same as secret and encrypt.
+  "queues": { "producers": [{ "queue": "aauth-events", "binding": "EVENTS_QUEUE" }] },
+
   // A second read service, to test secret's setServices live (plan
   // read-send-services Q13, 13c step 5): the same code at
   // decrypt-test.aauth.dev with its own D1, KEK, SIGNING_KEY and AGENT_KEY.
@@ -47,7 +51,8 @@
       "d1_databases": [
         { "binding": "DB", "database_name": "decrypt-test-aauth-dev", "database_id": "REPLACE_WITH_DECRYPT_TEST_D1_ID", "migrations_dir": "migrations" }
       ],
-      "triggers": { "crons": ["23 3 * * *"] }
+      "triggers": { "crons": ["23 3 * * *"] },
+      "queues": { "producers": [{ "queue": "aauth-events", "binding": "EVENTS_QUEUE" }] }
     }
   }
 
