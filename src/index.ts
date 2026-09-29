@@ -13,6 +13,7 @@ import { currentKey, listKeys, mintKey, publicRecord } from './keys'
 import { rotateKey } from './rotate'
 import { openapi } from './openapi'
 import { readMessage } from './read'
+import { callLog } from './call-log'
 import type { Env, HonoEnv } from './types'
 import { identityHash, nowIso } from './util'
 
@@ -26,6 +27,8 @@ app.onError((err, c) => {
 })
 
 app.use('*', cors({ origin: '*', exposeHeaders: ['ETag', 'AAuth-Requirement', 'Signature-Error', 'Accept-Signature', 'Accept-Signature-Scheme', 'Accept-Signature-Alg'] }))
+// One aauth.call record per call answered (call-log.ts), after CORS so a preflight is not a call.
+app.use('*', callLog)
 
 app.get('/.well-known/aauth-resource.json', (c) => {
   const origin = c.env.ORIGIN

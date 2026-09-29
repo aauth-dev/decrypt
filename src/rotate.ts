@@ -36,7 +36,13 @@ export async function rotateKey(c: Context<HonoEnv>): Promise<Response> {
 
   // ── 5c: tell the messaging service ──
   const unmint = () => c.env.DB.prepare('DELETE FROM private_keys WHERE ps_iss = ? AND ps_sub = ? AND kid = ?').bind(id.iss, id.sub, row.kid).run()
-  const chain = await chainedFetch(c.env, id.jwt, resource)
+  let ctx: { waitUntil(p: Promise<unknown>): void } | undefined
+  try {
+    ctx = c.executionCtx
+  } catch {
+    ctx = undefined
+  }
+  const chain = await chainedFetch(c.env, id.jwt, resource, ctx)
   if (!chain.ok) {
     await unmint()
     emit(c, { event: 'chain_failed', level: 40, step: 'person_token', code: chain.error, detail: chain.detail, ps: id.iss, resource, identity: who })

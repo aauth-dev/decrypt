@@ -3,11 +3,11 @@
 // messaging service at a non-agent.coop host. `resource` is a parameter and
 // its default comes from DEFAULT_RESOURCE. Every status code of 7b; an older
 // message after a rotation (5d); both interop vectors read end to end.
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { env } from 'cloudflare:test'
 import { clearMetadataCache } from '@aauth/resource'
 import { CompactEncrypt, decodeJwt, importJWK } from 'jose'
-import { Agent, FakePS, FakeSecret, RESOURCE, SECRET } from './fake-ps'
+import { Agent, FakePS, FakeSecret, PS, RESOURCE, SECRET } from './fake-ps'
 import { wrapPrivateJwk } from '../src/kek'
 import joseVector from '../spec/vectors/jose.json'
 import jwcryptoVector from '../spec/vectors/jwcrypto.json'
@@ -62,6 +62,54 @@ describe('readMessage (7b)', () => {
     expect(decodeJwt(ps.lastAgentToken!).sub).toBe('aauth:read@decrypt.aauth.dev')
     // Required by Hellō since Wallet 2026.9.24 (#4302): 401 without one.
     expect(decodeJwt(ps.lastAgentToken!).jti).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
+  })
+
+  it('the call log: one callee record for /read, and the two calls made inside it as its children (@aauth/call-log, in workerd)', async () => {
+    const id = await deliverTo(await currentKey(), JSON.stringify({ text: 'logged' }))
+    // Records go out through emit → console.log as JSON (and the queue when bound).
+    const records: Array<Record<string, any>> = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      try {
+        const o = JSON.parse(String(line))
+        if (o?.event === 'aauth.call') records.push(o)
+      } catch {
+        /* not one of ours */
+      }
+    })
+    try {
+      const { status } = await read(bob, { id, resource: SECRET })
+      expect(status).toBe(200)
+      // The records are written off the request path (waitUntil); give them a moment.
+      const done = () => records.filter((r) => r.side === 'caller').length >= 2 && records.some((r) => r.side === 'callee' && r.path === '/read')
+      for (let i = 0; i < 40 && !done(); i++) await new Promise((r) => setTimeout(r, 25))
+    } finally {
+      spy.mockRestore()
+    }
+    const callee = records.find((r) => r.side === 'callee' && r.path === '/read')!
+    expect(callee).toMatchObject({ event: 'aauth.call', service: 'decrypt', to: RESOURCE, to_role: 'resource', method: 'POST', path: '/read', status: 200, level: 30 })
+    // The fake PS puts agent_id on the person token (as Hellō does), so this end names the caller (nameAgent).
+    expect(callee).toMatchObject({ from: bob.agentId, from_role: 'agent', agent: bob.agentId })
+    expect(callee.call_id).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(callee.signed.scheme).toBe('jwt')
+    expect(callee.signed.token.type).toBe('aa-person+jwt')
+    expect(callee.request.body).toMatchObject({ id, resource: SECRET })
+    expect(callee.response.body).toMatchObject({ id, text: 'logged' })
+    // Nothing in the record is a JWT.
+    expect(JSON.stringify(callee)).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}\.eyJ/)
+
+    const callers = records.filter((r) => r.side === 'caller').sort((a, b) => a.started_at.localeCompare(b.started_at))
+    expect(callers.map((r) => [r.method, r.to, r.path, r.status, r.to_role])).toEqual([
+      ['POST', PS, '/aauth/token/person', 200, 'ps'],
+      ['GET', SECRET, `/messages/${id}`, 200, 'resource'],
+    ])
+    // Both were made while handling /read: AsyncLocalStorage carried the parent through the chain.
+    expect(callers.map((r) => r.parent)).toEqual([callee.call_id, callee.call_id])
+    expect(callers.every((r) => r.from === RESOURCE && r.from_role === 'resource')).toBe(true)
+    expect(callers.every((r) => /^[A-Za-z0-9_-]{43}$/.test(r.call_id))).toBe(true)
+    // The person token in the reply is its payload, and the upstream token in the request too.
+    expect(callers[0].response.body.person_token.type).toBe('aa-person+jwt')
+    expect(callers[0].request.body.upstream_token.type).toBe('aa-person+jwt')
+    expect(callers[0].signed).toMatchObject({ scheme: 'jwt', token: { type: 'aa-agent+jwt' } })
   })
 
   it('resource is optional: the default is DEFAULT_RESOURCE (Q7)', async () => {
