@@ -56,7 +56,13 @@ export async function readMessage(c: Context<HonoEnv>): Promise<Response> {
   if (!resource) return c.json({ error: 'invalid_request', field: 'resource', detail: 'the messaging service holding the message, as an https origin; leave it out for the default' }, 400)
 
   // ── 1. person token for the resource ──
-  const chain = await chainedFetch(c.env, id.jwt, resource)
+  let ctx: { waitUntil(p: Promise<unknown>): void } | undefined
+  try {
+    ctx = c.executionCtx
+  } catch {
+    ctx = undefined
+  }
+  const chain = await chainedFetch(c.env, id.jwt, resource, ctx)
   if (!chain.ok) {
     emit(c, { event: 'chain_failed', level: 40, step: 'person_token', code: chain.error, detail: chain.detail, ps: id.iss, resource, identity: who })
     return c.json({ error: chain.error, detail: `no person token for ${resource} from ${id.iss}: ${chain.detail}`, step: 'person_token', resource }, 502)
