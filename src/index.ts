@@ -14,6 +14,7 @@ import { rotateKey } from './rotate'
 import { openapi } from './openapi'
 import { readMessage } from './read'
 import { callLog } from './call-log'
+import { handleRevoke } from './revocation'
 import type { Env, HonoEnv } from './types'
 import { identityHash, nowIso } from './util'
 
@@ -41,6 +42,8 @@ app.get('/.well-known/aauth-resource.json', (c) => {
     r3_vocabularies: { 'urn:aauth:vocabulary:openapi': `${origin}/openapi.json` },
     contact: { feedback: 'feedback@agent.coop', abuse: 'abuse@agent.coop' },
     llms_txt: `${origin}/llms.txt`,
+    // Where the person server that issued a token for this service revokes it (revocation.ts).
+    revocation_endpoint: `${origin}/aauth/revoke`,
   })
 })
 // This service is an intermediary toward the messaging service (readMessage,
@@ -69,6 +72,7 @@ app.get('/keys', requireIdentity, async (c) => {
 })
 
 app.post('/read', requireIdentity, readMessage)
+app.post('/aauth/revoke', handleRevoke)
 
 // The page paths listed in run_worker_first reach the Worker on every host;
 // on the live host they are served from the assets binding here.
