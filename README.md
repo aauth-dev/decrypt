@@ -30,6 +30,13 @@ vectors from `jose` and `jwcrypto`. `getMessage` and `decryptEnvelope` are gone.
     calls (its `rotatePublicKey`; the person token's `agent_id` is on the host of `resource`) there
     is no call back. That is the no-loop rule.
   - `GET /keys` (`getKeys`): all keys.
+- `POST /aauth/revoke` (`revocation_endpoint`, AAuth -11 §Token Revocation): the Person Server
+  that issued a token revokes it with `{jti, exp}`, signed as itself (`Signature-Key: sig=jwks_uri`,
+  covering `content-type` and `content-digest`). The issuer is the verified signer, so a caller
+  revokes only its own tokens; the list is KV keyed `(iss, jti)` until `exp`. Accepted callers are
+  `REVOCATION_ISSUERS` (default `person.hello.coop`, `person.hello-beta.net`, `access.aauth.dev`);
+  anyone else is `403 unsupported_iss`. A revoked token is then refused with `401`,
+  `Signature-Error: error=revoked_jwt` and `requirement=person-token`.
 - Keys: P-256, used as JWE `ECDH-ES` with `A256GCM`. One format, a compact JWE:
   [spec/container.md](spec/container.md). Decryption is Web Crypto directly (`src/jwe.ts`), no
   library, checked against the vectors in `spec/vectors/`.
@@ -54,6 +61,7 @@ The full flow is in the
 npm install
 npx wrangler d1 create decrypt-aauth-dev         # put the id in wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote
+npx wrangler kv namespace create my-decrypt-revocation   # its id is the REVOCATION binding in wrangler.jsonc
 npm run generate-kek | npx wrangler secret put KEK
 npm run generate-key | npx wrangler secret put SIGNING_KEY
 npm run generate-key | npx wrangler secret put AGENT_KEY

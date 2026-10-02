@@ -6,6 +6,8 @@ export interface Env {
   SIGNING_KEY: string // Ed25519 private JWK (JSON), secret: signs the agent token
   AGENT_KEY: string // Ed25519 private JWK (JSON), secret: signs requests made as an intermediary (readMessage, rotateKey)
   DB: D1Database
+  REVOCATION: KVNamespace // the revocation list (revocation.ts)
+  REVOCATION_ISSUERS?: string // comma-separated servers whose revocations are honoured; unset = revocation.ts DEFAULT_REVOCATION_ISSUERS
   ASSETS?: Fetcher
   EVENTS_QUEUE?: Queue
 }

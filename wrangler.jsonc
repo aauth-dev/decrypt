@@ -25,6 +25,9 @@
     { "binding": "DB", "database_name": "decrypt-aauth-dev", "database_id": "b22d7df8-13be-4d3b-9940-b37074123fdd", "migrations_dir": "migrations" }
   ],
 
+  // The token revocation list (src/revocation.ts): revoked:{iss}:{jti}, TTL to the token's exp.
+  "kv_namespaces": [{ "binding": "REVOCATION", "id": "deef5ce87da84819ae375de49c93cd71" }],
+
   // Daily: purge retired keys past purge_after.
   "triggers": { "crons": ["23 3 * * *"] },
 
@@ -35,10 +38,12 @@
   // A second read service, to test secret's setServices live (plan
   // read-send-services Q13, 13c step 5): the same code at
   // decrypt-test.aauth.dev with its own D1, KEK, SIGNING_KEY and AGENT_KEY.
-  // `wrangler deploy --env test`. vars, routes and d1_databases are not
+  // `wrangler deploy --env test`. vars, routes, d1_databases and kv_namespaces are not
   // inherited by an environment, so they are all here. Create the database
-  // with `wrangler d1 create decrypt-test-aauth-dev` and put its id below;
-  // the placeholder makes a deploy fail rather than use the wrong database.
+  // with `wrangler d1 create decrypt-test-aauth-dev` and the revocation list
+  // with `wrangler kv namespace create decrypt-test-aauth-dev-revocation`, and
+  // put their ids below; the placeholders make a deploy fail rather than use
+  // the wrong ones.
   "env": {
     "test": {
       "name": "decrypt-test-aauth-dev",
@@ -51,6 +56,7 @@
       "d1_databases": [
         { "binding": "DB", "database_name": "decrypt-test-aauth-dev", "database_id": "REPLACE_WITH_DECRYPT_TEST_D1_ID", "migrations_dir": "migrations" }
       ],
+      "kv_namespaces": [{ "binding": "REVOCATION", "id": "REPLACE_WITH_DECRYPT_TEST_KV_ID" }],
       "triggers": { "crons": ["23 3 * * *"] },
       "queues": { "producers": [{ "queue": "aauth-events", "binding": "EVENTS_QUEUE" }] }
     }
