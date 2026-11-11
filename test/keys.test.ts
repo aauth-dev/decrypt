@@ -3,7 +3,7 @@
 // read.test.ts, rotateKey in rotate.test.ts, the container in jwe.test.ts.
 import { beforeAll, describe, expect, it } from 'vitest'
 import { SELF, env } from 'cloudflare:test'
-import { clearMetadataCache } from '@aauth/resource'
+import { clearKeyCache } from '../src/key-resolver'
 import { Agent, FakePS, FakeSecret, RESOURCE, SECRET } from './fake-ps'
 
 let ps: FakePS
@@ -17,7 +17,7 @@ beforeAll(async () => {
   new FakeSecret(ps)
   alice = await new Agent(ps, { handle: 'alice', email: 'alice@example.com' }, RESOURCE).init()
   bob = await new Agent(ps, { handle: 'bob', email: 'bob@example.com' }, RESOURCE).init()
-  clearMetadataCache()
+  clearKeyCache()
 })
 
 describe('public surface', () => {

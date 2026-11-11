@@ -5,7 +5,7 @@
 // message after a rotation (5d); both interop vectors read end to end.
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { env } from 'cloudflare:test'
-import { clearMetadataCache } from '@aauth/resource'
+import { clearKeyCache } from '../src/key-resolver'
 import { CompactEncrypt, decodeJwt, importJWK } from 'jose'
 import { Agent, FakePS, FakeSecret, PS, RESOURCE, SECRET } from './fake-ps'
 import { wrapPrivateJwk } from '../src/kek'
@@ -43,7 +43,7 @@ beforeAll(async () => {
   secret = new FakeSecret(ps)
   alice = await new Agent(ps, { handle: 'alice', email: 'alice@example.com' }, RESOURCE).init()
   bob = await new Agent(ps, BOB, RESOURCE).init()
-  clearMetadataCache()
+  clearKeyCache()
 })
 
 describe('readMessage (7b)', () => {

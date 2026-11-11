@@ -5,7 +5,7 @@
 // setPublicKey leaves the key unchanged.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { env } from 'cloudflare:test'
-import { clearMetadataCache } from '@aauth/resource'
+import { clearKeyCache } from '../src/key-resolver'
 import { Agent, FakePS, FakeSecret, RESOURCE, SECRET } from './fake-ps'
 
 let ps: FakePS
@@ -30,7 +30,7 @@ beforeAll(async () => {
   secret = new FakeSecret(ps)
   bob = await new Agent(ps, BOB, RESOURCE).init()
   secretForBob = await new Agent(ps, BOB, RESOURCE, SECRET_AGENT).init()
-  clearMetadataCache()
+  clearKeyCache()
   await bob.json('GET', '/key')
 })
 
